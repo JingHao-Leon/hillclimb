@@ -446,8 +446,12 @@ class CodexCliAgent:
             common["token_usage"] = {
                 key: count for key, count in reader.usage.items() if count
             }
-            if self.auth == "openrouter":
-                common["cost_usd"] = cost_usd(request.model, common["token_usage"])
+            # list price on every login: billed through OpenRouter or the
+            # API key, an estimate on a subscription (`AgentInfo.subscription`);
+            # the CLI's own default model has no name to price
+            priced_model = native_model(request.model, self.auth)
+            if priced_model is not None:
+                common["cost_usd"] = cost_usd(priced_model, common["token_usage"])
         if aborted:
             return AgentResult(
                 ok=False,

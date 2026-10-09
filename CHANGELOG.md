@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- **A subscription's cost is shown, as an estimate.** Every coding agent call is priced at list
+  price, on every login: codex and pi now price subscription calls too (Claude Code already
+  reported one). The journal records whether a call ran on a subscription
+  (`AgentInfo.subscription`), and `watch`, `status`, `show` and `to_frame()` mark that cost
+  `(sub)`: `$1.60 (sub)`, or `$0.40 + $1.20 (sub)` when a search mixed logins.
+  `budget.max_cost_usd` keeps counting it, and a search that reaches it on a subscription parks
+  with "estimated subscription cost reached". Prices match a provider's own model ids
+  (`gpt-5.1-codex`, `claude-sonnet-4-5-20250929`) as well as OpenRouter's; the Codex CLI's
+  unnamed default model still shows `-`.
+
 ## 0.8.2 — 2026-10-08
 
 ### Fixed

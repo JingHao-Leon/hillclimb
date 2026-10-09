@@ -13,6 +13,7 @@ from hillclimb.cli.common import _m, say
 from hillclimb.cli._app import HillclimbGroup, app
 from hillclimb.cli.knowledge import knowledge_graph
 from hillclimb.config import Config
+from hillclimb.harness.budget import COST_EPSILON, format_cost, journal_spend
 from hillclimb.harness.journal import Journal
 from hillclimb.harness.run import search_ref
 from hillclimb.harness.store import DataStore, SearchRecord, open_store, resolve_search
@@ -49,6 +50,9 @@ def status(search: str = typer.Argument("latest")):
             line += f"  evaluations {budget.evaluations}/{budget.max_evaluations}"
         if budget.max_tokens:
             line += f"  tokens {budget.tokens:,}/{budget.max_tokens:,}"
+        spend = journal_spend(journal)
+        if spend.cost_usd > COST_EPSILON:
+            line += f"  cost {format_cost(spend.cost_usd, spend.subscription_cost_usd)}"
         if search_status.current:
             active = " · ".join(
                 f"[path]{_m(c.candidate_id)}[/]({_m(c.operator)}/{_m(c.phase)})"
@@ -176,7 +180,7 @@ def show(
     if agent.name:
         agent_line = f"agent: {agent.name}"
         if agent.cost_usd is not None:
-            agent_line += f", ${agent.cost_usd:.2f}"
+            agent_line += f", ${agent.cost_usd:.2f}" + (" (sub)" if agent.subscription else "")
         if agent.num_turns is not None:
             agent_line += f", {agent.num_turns} turns"
         say(f"[head]agent:[/] {_m(agent_line[len('agent: '):])}")

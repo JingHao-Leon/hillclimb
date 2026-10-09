@@ -205,7 +205,10 @@ hold only the bases, which decide nothing. `_moved.py` maps pre-move module pref
   `~/.cache/hillclimb/codex-home/<auth>/`, so personal `~/.codex` settings
   change neither a search's results nor its token bill; a provider 402 parks
   the search as `out_of_credits`, and `harness/pricing.py` fills `cost_usd` from
-  OpenRouter's catalogue so `budget.max_cost_usd` applies. `hillclimb connect`
+  OpenRouter's catalogue (provider ids matched by their bare name) so `budget.max_cost_usd`
+  applies. A subscription call is priced too: `AgentInfo.subscription` marks it an estimate,
+  views show `(sub)` (`budget.format_cost`), the ceiling still counts it and parks with
+  "estimated subscription cost reached". `hillclimb connect`
   (`connect.py`) is where a credential is checked on purpose instead of at the
   first spawn: every probe runs through the SAME env builders the coding agents use
   (`subscription_env`/`codex_env`/`pi_env`), so an inherited `ANTHROPIC_API_KEY`

@@ -213,6 +213,16 @@ def test_codex_error_path_keeps_streamed_usage(tmp_path: Path):
     assert result.total_tokens == 400 + 50
 
 
+def test_subscription_calls_are_priced_at_list(tmp_path: Path):
+    """Nothing is billed on a ChatGPT login, but the call is priced so a
+    view can show what it would have cost (marked `(sub)`)."""
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK), auth="subscription")
+    result = agent.invoke(make_request(tmp_path))
+
+    assert result.ok
+    assert result.cost_usd == pytest.approx(20 * 1e-6 + 25 * 2e-6)
+
+
 def test_openrouter_auth_adds_the_provider_overrides(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK), auth="openrouter")

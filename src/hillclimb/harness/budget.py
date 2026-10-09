@@ -20,6 +20,9 @@ class Spend:
     evaluations: int = 0
     tokens: int = 0
     cost_usd: float = 0.0
+    # the part of cost_usd that ran on a subscription login: a list-price
+    # estimate, not a charge (`format_cost` marks it `(sub)`)
+    subscription_cost_usd: float = 0.0
     # wall clock, where a reader has the status record beside the journal
     # (a search's result); the harness's own clock is its BudgetManager
     seconds: float | None = None
@@ -27,13 +30,41 @@ class Spend:
 
 def journal_spend(journal: Journal) -> Spend:
     evaluations = tokens = 0
-    cost = 0.0
+    cost = subscription = 0.0
     for candidate in journal.candidates.values():
         trials = len(candidate.trials)
         evaluations += max(0, trials - 1) if candidate.operator in FLOOR_OPERATORS else trials
         tokens += candidate.agent.total_tokens or 0
         cost += candidate.agent.cost_usd or 0.0
-    return Spend(evaluations=evaluations, tokens=tokens, cost_usd=cost)
+        if candidate.agent.subscription:
+            subscription += candidate.agent.cost_usd or 0.0
+    return Spend(evaluations=evaluations, tokens=tokens, cost_usd=cost, subscription_cost_usd=subscription)
+
+
+# below a cent's hundredth, a cost is nothing to show
+COST_EPSILON = 1e-4
+
+
+def on_subscription(agent) -> bool:
+    """Whether a coding agent's calls run on a subscription login, where a
+    cost is what the call would have billed, not what it did."""
+    return getattr(agent, "auth", None) == "subscription"
+
+
+def format_cost(total_usd: float | None, subscription_usd: float = 0.0) -> str:
+    """`$1.60`, or `$1.60 (sub)` when it ran on a subscription (an estimate
+    at list price), or `$0.40 + $1.20 (sub)` when a search mixed the two;
+    `-` for nothing."""
+    total = total_usd or 0.0
+    if total <= COST_EPSILON:
+        return "-"
+    sub = min(max(subscription_usd, 0.0), total)
+    billed = total - sub
+    if sub <= COST_EPSILON:
+        return f"${total:.2f}"
+    if billed <= COST_EPSILON:
+        return f"${total:.2f} (sub)"
+    return f"${billed:.2f} + ${sub:.2f} (sub)"
 
 
 @dataclass(frozen=True)

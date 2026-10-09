@@ -227,6 +227,7 @@ class SearchOutcome:
                 "model": cand.agent.model,
                 "tokens": cand.agent.total_tokens,
                 "cost_usd": cand.agent.cost_usd,
+                "subscription": cand.agent.subscription,
                 "agent_s": cand.agent.agent_duration_s,
                 "created_at": cand.created_at,
                 "finished_at": cand.finished_at,

@@ -2,13 +2,16 @@
 
 A lookup over OpenRouter's public model catalogue, cached on the machine.
 `cost_usd` is what makes `budget.max_cost_usd` a real ceiling for
-provider-billed runs; an unknown model yields None rather than an invented
-number, the contract `claude_code.estimate_cost_usd` already follows.
+provider-billed runs, and what a subscription call would have cost (shown
+as `(sub)`: an estimate, never a charge); an unknown model yields None
+rather than an invented number, the contract `claude_code.estimate_cost_usd`
+already follows.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -74,22 +77,36 @@ def _catalogue() -> dict | None:
     return cached
 
 
+def _bare_id(model: str) -> str:
+    """A model id without its provider prefix or date stamp, dots as dashes:
+    `anthropic/claude-sonnet-4.5` and `claude-sonnet-4-5-20250929` both
+    read `claude-sonnet-4-5`."""
+    bare = model.lower().rsplit("/", 1)[-1].replace(".", "-")
+    return re.sub(r"-\d{8}$", "", bare)
+
+
 def model_prices(model: str, *, catalogue: dict | None = None) -> Prices | None:
-    """List prices for an OpenRouter model id, or None when it is unknown."""
+    """List prices for a model, or None when it is unknown. An OpenRouter id
+    matches exactly; a provider's own id (what a subscription login runs,
+    `gpt-5.1-codex`) matches the one catalogue entry with the same bare id."""
     data = catalogue if catalogue is not None else _catalogue()
     if not data:
         return None
-    for entry in data.get("data") or []:
-        if entry.get("id") != model:
-            continue
-        pricing = entry.get("pricing") or {}
-        return Prices(
-            prompt=float(pricing.get("prompt") or 0.0),
-            completion=float(pricing.get("completion") or 0.0),
-            cache_read=float(pricing.get("input_cache_read") or 0.0),
-            cache_write=float(pricing.get("input_cache_write") or 0.0),
-        )
-    return None
+    entries = data.get("data") or []
+    match = next((e for e in entries if e.get("id") == model), None)
+    if match is None:
+        bare = _bare_id(model)
+        same = [e for e in entries if _bare_id(str(e.get("id") or "")) == bare]
+        match = same[0] if len(same) == 1 else None
+    if match is None:
+        return None
+    pricing = match.get("pricing") or {}
+    return Prices(
+        prompt=float(pricing.get("prompt") or 0.0),
+        completion=float(pricing.get("completion") or 0.0),
+        cache_read=float(pricing.get("input_cache_read") or 0.0),
+        cache_write=float(pricing.get("input_cache_write") or 0.0),
+    )
 
 
 def cost_usd(

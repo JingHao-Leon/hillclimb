@@ -10,7 +10,15 @@ from pathlib import Path
 
 from hillclimb.agents.base import Agent, AgentRequest, AgentResult
 from hillclimb.harness.baseline import write_baseline
-from hillclimb.harness.budget import FLOOR_OPERATORS, BudgetManager, Spend, journal_spend
+from hillclimb.harness.budget import (
+    COST_EPSILON,
+    FLOOR_OPERATORS,
+    BudgetManager,
+    Spend,
+    format_cost,
+    journal_spend,
+    on_subscription,
+)
 from hillclimb.harness.candidate import AgentInfo, Candidate, notes_summary, read_solution, source_hash, utcnow
 from hillclimb.config import Config
 from hillclimb.harness.control import ControlCommand, apply_prune, drain_commands_dir, resync_best
@@ -742,10 +750,21 @@ class Harness:
         """Park (resumable) when cumulative coding agent spend reaches the ceiling —
         the engine-side guarantee behind hosted credit reservations."""
         ceiling = self.config.budget.max_cost_usd
-        if ceiling > 0 and self.total_cost_usd() >= ceiling:
+        if ceiling <= 0:
+            return
+        spend = journal_spend(self.journal)
+        if spend.cost_usd < ceiling:
+            return
+        if spend.cost_usd - spend.subscription_cost_usd <= COST_EPSILON:
+            # nothing was billed: the ceiling caps how much of the login's
+            # quota a search may use, at list price
             raise ParkedSearch(
-                f"cost ceiling reached (${self.total_cost_usd():.2f} >= ${ceiling:.2f})"
+                f"estimated subscription cost reached (${spend.cost_usd:.2f} >= ${ceiling:.2f})"
             )
+        raise ParkedSearch(
+            f"cost ceiling reached ({format_cost(spend.cost_usd, spend.subscription_cost_usd)} "
+            f">= ${ceiling:.2f})"
+        )
 
     # --- live cross-search sharing ---
 
@@ -1060,6 +1079,7 @@ class Harness:
                 else None
             ),
         )
+        agent = self.agents.get(route.agent, route.agent_auth) if self.agents is not None else None
         if self.status is not None:
             self.status.add_current(
                 CurrentCandidate(
@@ -1067,6 +1087,7 @@ class Harness:
                     operator=operator,
                     phase="agent",
                     candidate_dir=str(candidate_dir),
+                    subscription=on_subscription(agent if agent is not None else self.agent),
                 )
             )
             self._status()
@@ -1080,11 +1101,7 @@ class Harness:
                 if prep.require_change and parent_solution is not None and parent_solution.exists()
                 else None
             ),
-            agent=(
-                self.agents.get(route.agent, route.agent_auth)
-                if self.agents is not None
-                else None
-            ),
+            agent=agent,
         )
 
     def _same_code_as(self, candidate: Candidate, candidate_dir: Path) -> Candidate | None:
@@ -1206,6 +1223,7 @@ class Harness:
             model_id=result.model_id,
             session_id=result.session_id,
             cost_usd=result.cost_usd,
+            subscription=on_subscription(agent),
             num_turns=result.num_turns,
             total_tokens=result.total_tokens,
             token_usage=result.token_usage,

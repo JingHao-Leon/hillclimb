@@ -652,6 +652,20 @@ class TestCostCeiling:
             searcher._check_cost_ceiling()
         assert searcher.total_cost_usd() == pytest.approx(0.06)
 
+    def test_subscription_estimate_is_journaled_and_parks_by_name(self, task, config):
+        """On a subscription nothing is billed: the cost is journaled as an
+        estimate, still counts toward the ceiling, and the park says so."""
+        config.budget.max_cost_usd = 0.05
+        agent = FakeAgent()
+        agent.auth = "subscription"
+        agent.queue(script=ok_script(0.6), notes="d\n", result={"cost_usd": 0.06})
+        searcher, journal, _ = make_searcher(task, config, agent)
+
+        searcher.run_operator("draft", None)
+        assert next(c for c in journal.candidates.values() if c.operator == "draft").agent.subscription
+        with pytest.raises(ParkedSearch, match=r"estimated subscription cost reached \(\$0\.06 >= \$0\.05\)"):
+            searcher._check_cost_ceiling()
+
     def test_no_ceiling_by_default(self, task, config):
         agent = FakeAgent()
         agent.queue(script=ok_script(0.6), notes="d\n", result={"cost_usd": 999.0})

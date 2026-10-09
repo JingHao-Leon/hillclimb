@@ -62,6 +62,11 @@ class AgentInfo(BaseModel):
     model_id: str | None = None
     session_id: str | None = None
     cost_usd: float | None = None
+    # the call ran on a subscription login (`agent_auth: subscription`):
+    # cost_usd is what it would have cost at list price, not a charge — views
+    # mark it `(sub)`, and `budget.max_cost_usd` still counts it. None on
+    # journals predating the field
+    subscription: bool | None = None
     num_turns: int | None = None
     total_tokens: int | None = None
     # total_tokens split per kind (input_tokens, output_tokens,

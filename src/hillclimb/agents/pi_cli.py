@@ -457,8 +457,11 @@ class PiCliAgent:
         if reader is not None:
             token_usage = {key: value for key, value in reader.usage.items() if value}
             reported_cost = reader.cost_usd
-            if reported_cost == 0 and (
-                self.auth == "openrouter"
+            # pi prices what its provider bills; a subscription login reports
+            # $0, so price it at list (`AgentInfo.subscription` marks it an
+            # estimate) — as an OpenRouter route pi has no price for
+            if reported_cost == 0 and token_usage and (
+                self.auth in ("openrouter", "subscription")
                 or "openrouter" in reader.providers
                 or request.model.startswith("openrouter/")
             ):

@@ -154,7 +154,13 @@ instead; they are journaled `abandoned` ("cut off at the budget deadline").
 
 The clock is one dimension of the budget: `budget.max_evaluations` (verifier
 trials the climber may spend), `budget.max_tokens` and `budget.max_cost_usd`
-cap the others (`0` = no limit). `budget.patience: N` ends a search after N
+cap the others (`0` = no limit). Every coding agent call is priced at list
+price; on a subscription login nothing is billed, so views mark that cost
+`(sub)` (`$1.60 (sub)`, or `$0.40 + $1.20 (sub)` when a search mixed logins) and
+`max_cost_usd` still counts it: the search parks with "estimated subscription
+cost reached", a cap on how much of the login's quota one search may use.
+Codex's own default model has no name to price, so its calls show `-`.
+`budget.patience: N` ends a search after N
 finished attempts in a row without a new best; attempts that came back as
 copies of scored code count, and five copies in a row end a search anyway. There is no hidden cap on the number of
 candidates.

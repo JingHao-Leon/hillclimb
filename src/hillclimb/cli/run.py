@@ -965,7 +965,10 @@ def smoke(
     say(f"[head]val_score:[/]   {_m(candidate.val_score)}")
     say(f"[head]holdout:[/]     {_m(candidate.holdout_score)} [note](error: {_m(trial.holdout_error if trial else '-')})[/]")
     say(f"[head]session_id:[/]  {_m(candidate.agent.session_id)}")
-    say(f"[head]cost_usd:[/]    {_m(candidate.agent.cost_usd)}")
+    say(
+        f"[head]cost_usd:[/]    {_m(candidate.agent.cost_usd)}"
+        + (" [note](sub: an estimate, not billed)[/]" if candidate.agent.subscription else "")
+    )
     say(f"[head]num_turns:[/]   {_m(candidate.agent.num_turns)}")
     say(f"[head]error_kind:[/]  {_m(candidate.agent.error_kind)}")
     say(f"[head]raw output:[/]  [path]{_m(Path(candidate.candidate_dir) / 'agent_raw.json')}[/]")

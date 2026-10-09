@@ -21,6 +21,7 @@ from hillclimb.agents.claude_code import (
     is_concrete_model_id,
     usage_total_tokens,
 )
+from hillclimb.harness.budget import format_cost, journal_spend
 from hillclimb.harness.candidate import Candidate, Replicate
 from hillclimb.config import Config
 from hillclimb.harness.control import request_prune, request_stop
@@ -162,12 +163,18 @@ def _fmt_tokens(total: int | None) -> str:
     return f"{total / 1_000_000:.2f}M"
 
 
-def _fmt_cost(usd: float | None) -> str:
+def _fmt_cost(usd: float | None, subscription_usd: float = 0.0) -> str:
     """`$12.34`; cents matter at every scale a search reaches, so no
-    compaction — and a zero reads as "-" like an empty token count."""
-    if not usd:
+    compaction — and a zero reads as "-" like an empty token count. The part
+    that ran on a subscription login is an estimate and says `(sub)`."""
+    return format_cost(usd, subscription_usd)
+
+
+def _agent_cost(agent) -> str:
+    """One coding agent call's cost cell: `$0.42`, `$0.42 (sub)` or `-`."""
+    if agent.cost_usd is None:
         return "-"
-    return f"${usd:.2f}"
+    return f"${agent.cost_usd:.2f}" + (" (sub)" if agent.subscription else "")
 
 
 def _format_budget_total(seconds: float) -> str:
@@ -419,14 +426,17 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
     n_buggy = sum(1 for c in journal.candidates.values() if c.status == "buggy")
     n_abandoned = sum(1 for c in journal.candidates.values() if c.status == "abandoned")
     tokens = sum(c.agent.total_tokens or 0 for c in journal.candidates.values())
-    spend = sum(c.agent.cost_usd or 0.0 for c in journal.candidates.values())
+    spent = journal_spend(journal)
+    spend, spend_sub = spent.cost_usd, spent.subscription_cost_usd
     if status is not None:
         # in-flight operators are not in the journal yet: read their live
         # streams so the count climbs while the tokens are being burned
         for current in status.current:
             candidate_dir = resolve_candidate_dir(search_dir, current.candidate_id, current.candidate_dir)
             tokens += _stream_tokens(candidate_dir)
-            spend += _stream_cost_usd(candidate_dir)
+            live = _stream_cost_usd(candidate_dir)
+            spend += live
+            spend_sub += live if current.subscription else 0.0
         best_val = _fmt(status.best.val_score) if status.best else "-"
         selected = (
             f"{status.selected.candidate_id} "
@@ -459,7 +469,7 @@ def _search_row(store: DataStore, record: SearchRecord) -> SearchRow:
         agent=_display_agent(meta.agent, journal),
         model=_display_model(meta.model, _resolved_model_id(journal, status, search_dir)),
         tokens=_fmt_tokens(tokens),
-        spend=_fmt_cost(spend),
+        spend=_fmt_cost(spend, spend_sub),
         state=state,
         candidates=(
             f"{len(journal.candidates)} ({n_passing} passing"
@@ -522,7 +532,7 @@ def _run_row(store: DataStore, meta: RunMeta) -> RunRow:
     states = [record.state for record in records]
     candidate_total = 0
     token_total = 0
-    spend_total = 0.0
+    spend_total = spend_sub = 0.0
     selected_count = 0
     remaining_s = 0.0
     has_budget = False
@@ -530,14 +540,18 @@ def _run_row(store: DataStore, meta: RunMeta) -> RunRow:
         journal = Journal(store.journal(record.key))
         candidate_total += len(journal.candidates)
         token_total += sum(c.agent.total_tokens or 0 for c in journal.candidates.values())
-        spend_total += sum(c.agent.cost_usd or 0.0 for c in journal.candidates.values())
+        spent = journal_spend(journal)
+        spend_total += spent.cost_usd
+        spend_sub += spent.subscription_cost_usd
         status = store.read_status(record.key)
         if status is None:
             continue
         for current in status.current:
             candidate_dir = resolve_candidate_dir(record.search_dir, current.candidate_id, current.candidate_dir)
             token_total += _stream_tokens(candidate_dir)
-            spend_total += _stream_cost_usd(candidate_dir)
+            live = _stream_cost_usd(candidate_dir)
+            spend_total += live
+            spend_sub += live if current.subscription else 0.0
         if status.selected is not None:
             selected_count += 1
         remaining_s += live_remaining_s(status, state)
@@ -552,7 +566,7 @@ def _run_row(store: DataStore, meta: RunMeta) -> RunRow:
         searches=searches,
         candidates=str(candidate_total),
         tokens=_fmt_tokens(token_total),
-        spend=_fmt_cost(spend_total),
+        spend=_fmt_cost(spend_total, spend_sub),
         selected=f"{selected_count} selected" if selected_count else "-",
         budget_left=_format_budget_left(remaining_s if has_budget else None),
         started=_display_time(started, "%Y-%m-%d %H:%M:%S") or "-",
@@ -1099,7 +1113,7 @@ def candidate_detail_lines(record: SearchRecord, journal: Journal, candidate_id:
     else:
         lines.append("Trial: (not executed)")
     if candidate.agent.name or candidate.agent.session_id or candidate.agent.error_kind:
-        cost = f"${candidate.agent.cost_usd:.2f}" if candidate.agent.cost_usd is not None else "-"
+        cost = _agent_cost(candidate.agent)
         lines.append(
             "Agent: "
             f"{candidate.agent.name or '-'}  "
@@ -1344,7 +1358,7 @@ def candidate_detail_renderables(
             "",
         )
     elif agent.name or agent.session_id or agent.error_kind:
-        cost = f"${agent.cost_usd:.2f}" if agent.cost_usd is not None else "-"
+        cost = _agent_cost(agent)
         agent_s = f"{agent.agent_duration_s:.0f}s" if agent.agent_duration_s is not None else "-"
         shown = agent.model_id if is_concrete_model_id(agent.model_id) else agent.model
         model = f"  model={shown}" if shown else ""

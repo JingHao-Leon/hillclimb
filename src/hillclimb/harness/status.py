@@ -69,6 +69,9 @@ class CurrentCandidate(BaseModel):
     # status.json written before these existed, and until the first change.
     phase_started_at: str | None = None
     phase_limit_s: float | None = None
+    # the coding agent runs on a subscription login: its streamed cost is an
+    # estimate (`watch` marks it `(sub)`); None on older status records
+    subscription: bool | None = None
 
     @property
     def key(self) -> tuple[str, int | None]:
