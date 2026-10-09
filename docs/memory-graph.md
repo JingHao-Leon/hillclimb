@@ -83,11 +83,12 @@ and never pins a layout across keys.
   (`memory_params.playbooks`), and credit flows to the playbook's
   `source_claims`, keeping the loop closed through the rewrite.
 - **Skill library** (`modules/memory/skills.py`): scored non-baseline winners are harvested
-  verbatim into `knowledge/skills/<family>--<run-ref>/` (2 best per family,
-  direction-aware). The next search's FIRST draft gets the best match
-  (same-family by score, else concept-sibling by recency) as
-  `reference_solution.py` plus a starter cue; later drafts stay
-  reference-free (`memory_params.skills`).
+  verbatim into `knowledge/skills/<family>--<run-ref>/` (2 best per problem
+  and metric, direction-aware). The next search's FIRST draft on the same
+  problem, metric and direction gets the best one as `reference_solution.py`
+  plus a starter cue; another problem's code never is. Later drafts stay
+  reference-free (`memory_params.skills`). Searches run only on scripted
+  agents (`dummy`, `toy`) are never harvested.
 - **Memory as a tool**: `hillclimb knowledge query "<terms>" [--json]` is an
   LLM-free graph lookup (entities lead with their live claims, track
   records, retirement status). All operator contracts advertise it via a

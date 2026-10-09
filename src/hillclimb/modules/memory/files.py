@@ -173,6 +173,7 @@ class FilesMemory(Memory):
         The claims come through this memory's graph module, so a climber that
         indexes memory differently is shown what it asked for."""
         from hillclimb.modules.memory.knowledge import (
+            claim_in_scope,
             complexity_offset,
             load_cards,
             problem_family,
@@ -184,7 +185,11 @@ class FilesMemory(Memory):
         if knowledge_dir is None:
             return None, 0, []
         family = problem_family(problem.problem_id, env.target)
-        cards = load_cards(knowledge_dir, problem_id=problem.problem_id, family=family)
+        scope = env.config.learning.scope
+        problem_key = getattr(problem, "problem_key", "") or ""
+        cards = load_cards(
+            knowledge_dir, problem_id=problem.problem_id, family=family, scope=scope, problem_key=problem_key,
+        )
         if not cards:
             return None, 0, []
         log(f"learning: {len(cards)} prior search card(s) inform this search")
@@ -205,7 +210,8 @@ class FilesMemory(Memory):
                 kind = problem.runtime
                 concepts = problem_concepts(kind, problem.metric_name)
                 playbooks = []
-                if self.param("playbooks"):
+                # a playbook is consolidated across problems: only `all` admits it
+                if self.param("playbooks") and scope == "all":
                     from hillclimb.modules.memory.consolidate import load_playbooks, render_playbooks
 
                     playbooks = load_playbooks(knowledge_dir, concepts)
@@ -218,12 +224,15 @@ class FilesMemory(Memory):
                     claim_ids = sorted({cid for p in playbooks for cid in p.source_claims})
                 else:
                     module = self.graph_module()
-                    nodes = module.retrieve(
-                        load_or_build_graph(knowledge_dir, module=module),
-                        family=family,
-                        problem_id=problem.problem_id,
-                        concepts=concepts,
-                    )
+                    nodes = [
+                        node for node in module.retrieve(
+                            load_or_build_graph(knowledge_dir, module=module),
+                            family=family,
+                            problem_id=problem.problem_id,
+                            concepts=concepts,
+                        )
+                        if claim_in_scope(node, scope=scope, problem_id=problem.problem_id, family=family)
+                    ]
                     claims_text = render_claims([node_to_claim(n) for n in nodes])
                     if claims_text:
                         log(f"learning: {len(nodes)} distilled claim(s) inform this search")
@@ -242,15 +251,15 @@ class FilesMemory(Memory):
         if knowledge_dir is None:
             return None, ""
         try:
-            from hillclimb.modules.memory.claims import problem_concepts
             from hillclimb.modules.memory.knowledge import problem_family
             from hillclimb.modules.memory.skills import SKILL_CODE_FILENAME, select_skill
 
-            kind = problem.runtime
             match = select_skill(
                 knowledge_dir,
                 family=problem_family(problem.problem_id, env.target),
-                concepts=problem_concepts(kind, problem.metric_name),
+                problem_id=problem.problem_id,
+                problem_key=getattr(problem, "problem_key", "") or "",
+                metric=problem.metric_name,
                 higher_is_better=problem.higher_is_better,
             )
             if match is not None:
@@ -301,6 +310,9 @@ class FilesMemory(Memory):
                 run_dir,
                 exclude_search_id=env.search_dir.name,
                 family=problem_family(env.problem.problem_id, self._family_target()),
+                scope=env.config.learning.scope,
+                problem_id=env.problem.problem_id,
+                problem_key=getattr(env.problem, "problem_key", "") or "",
             )
             return render_live_experience(cards, max_cards=int(self.param("max_cards")))
         except Exception:  # noqa: BLE001

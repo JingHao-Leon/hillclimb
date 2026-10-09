@@ -1,4 +1,4 @@
-"""Skill library: harvest quality gate, per-family cap, selection, injection."""
+"""Skill library: harvest quality gate, per-problem cap, selection, injection."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from hillclimb.harness.journal import Journal
 from hillclimb.modules.memory.knowledge import KnowledgeCard
 from hillclimb.modules.memory.skills import (
     SKILL_CODE_FILENAME,
-    SKILLS_PER_FAMILY,
+    SKILLS_PER_PROBLEM,
     harvest_skill,
     load_skills,
     select_skill,
@@ -43,9 +43,9 @@ def winner_journal(tmp_path, val=0.8, operator="improve", code="import sklearn\n
     )])
 
 
-def card(problem_id="comp-a", run_ref="r1/s1", metric="accuracy"):
-    return KnowledgeCard(problem_id=problem_id, family=problem_id,
-                         run_ref=run_ref, metric=metric)
+def card(problem_id="comp-a", run_ref="r1/s1", metric="accuracy", family=None, agents=("claude-code",)):
+    return KnowledgeCard(problem_id=problem_id, family=family or problem_id,
+                         run_ref=run_ref, metric=metric, agents=list(agents))
 
 
 class TestHarvest:
@@ -79,6 +79,33 @@ class TestHarvest:
                              log=lambda m: None) is None
         assert load_skills(kdir) == []
 
+    def test_scripted_search_is_not_harvested(self, tmp_path):
+        kdir = tmp_path / "knowledge"
+        for agents in (["dummy"], ["toy"], ["dummy", "toy"]):
+            assert harvest_skill(
+                winner_journal(tmp_path / "-".join(agents)), problem=Problem(),
+                card=card(agents=agents), knowledge_dir=kdir,
+                selection="rank-blend", log=lambda m: None,
+            ) is None
+        assert load_skills(kdir) == []
+
+    def test_cap_is_per_problem_and_metric(self, tmp_path):
+        """A sibling's winner never evicts this problem's: their scores measure different things."""
+        kdir = tmp_path / "knowledge"
+        for i, val in enumerate((0.6, 0.7)):
+            harvest_skill(
+                winner_journal(tmp_path / str(i), val=val), problem=Problem(),
+                card=card(run_ref=f"r{i}/s1", family="comp"), knowledge_dir=kdir,
+                selection="rank-blend", log=lambda m: None,
+            )
+        sibling = harvest_skill(
+            winner_journal(tmp_path / "sib", val=0.99), problem=Problem(),
+            card=card(problem_id="comp-b", run_ref="r8/s1", family="comp"), knowledge_dir=kdir,
+            selection="rank-blend", log=lambda m: None,
+        )
+        assert sibling is not None
+        assert sorted(s.score for s, _ in load_skills(kdir)) == [0.6, 0.7, 0.99]
+
     def test_family_cap_replaces_worst(self, tmp_path):
         kdir = tmp_path / "knowledge"
         for i, val in enumerate((0.6, 0.7)):
@@ -87,7 +114,7 @@ class TestHarvest:
                 card=card(run_ref=f"r{i}/s1"), knowledge_dir=kdir,
                 selection="rank-blend", log=lambda m: None,
             )
-        assert len(load_skills(kdir)) == SKILLS_PER_FAMILY
+        assert len(load_skills(kdir)) == SKILLS_PER_PROBLEM
         # a better winner replaces the worst (0.6)
         harvest_skill(
             winner_journal(tmp_path / "hi", val=0.9), problem=Problem(),
@@ -115,21 +142,35 @@ class TestSelect:
                       selection="rank-blend", log=lambda m: None)
         return kdir
 
-    def test_same_family_best_score(self, tmp_path):
+    def test_same_problem_best_score(self, tmp_path):
         kdir = self._seed(tmp_path)
-        match = select_skill(kdir, family="comp-a", concepts=["tabular"],
+        match = select_skill(kdir, family="comp-a", problem_id="comp-a", metric="accuracy",
                              higher_is_better=True)
         assert match is not None and match[0].score == 0.9
 
-    def test_concept_fallback_and_no_match(self, tmp_path):
+    def test_another_problems_code_is_never_handed_over(self, tmp_path):
         kdir = self._seed(tmp_path)
-        # different family, shared concept -> newest sibling
-        match = select_skill(kdir, family="other", concepts=["tabular"],
-                             higher_is_better=True)
-        assert match is not None and match[0].family == "comp-a"
-        # no concept overlap -> nothing
-        assert select_skill(kdir, family="other", concepts=["image"],
+        # another problem, even in the same family or sharing every concept
+        assert select_skill(kdir, family="comp-a", problem_id="comp-b",
                             higher_is_better=True) is None
+        assert select_skill(kdir, family="other", problem_id="other",
+                            higher_is_better=True) is None
+        # the same problem measured on another metric, or the other way round
+        assert select_skill(kdir, family="comp-a", problem_id="comp-a", metric="logloss",
+                            higher_is_better=True) is None
+        assert select_skill(kdir, family="comp-a", problem_id="comp-a", metric="accuracy",
+                            higher_is_better=False) is None
+
+    def test_problem_key_wins_over_the_local_id(self, tmp_path):
+        kdir = tmp_path / "knowledge"
+        keyed = card()
+        keyed.problem_key = "emflow://suite:solar"
+        harvest_skill(winner_journal(tmp_path), problem=Problem(), card=keyed,
+                      knowledge_dir=kdir, selection="rank-blend", log=lambda m: None)
+        assert select_skill(kdir, family="comp-a", problem_id="comp-a",
+                            problem_key="emflow://suite:wind", higher_is_better=True) is None
+        assert select_skill(kdir, family="comp-a", problem_id="comp-a",
+                            problem_key="emflow://suite:solar", higher_is_better=True) is not None
 
 
 class TestInjection:

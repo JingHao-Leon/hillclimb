@@ -452,6 +452,12 @@ class LearningConfig(BaseModel):
     # wall clock for the one coding agent pass a memory may make after a search
     # (claim distillation; routed via `routing: distill:`)
     claims_timeout_s: int = 300
+    # which knowledge may reach a search: `problem` (only searches on this
+    # problem), `family` (its problem family too: gefcom2014 solar and wind)
+    # or `all` (also claims and playbooks from other problems that share a
+    # concept). A proven solution handed to the first draft is always this
+    # problem's own, measured on the same metric
+    scope: Literal["problem", "family", "all"] = "all"
 
 
 class AgentContextConfig(BaseModel):

@@ -165,6 +165,7 @@ model: sonnet
 
 # learning:
 #   enabled: true          # knowledge cards in knowledge/ inform new searches
+#   scope: all             # problem | family | all: whose knowledge reaches a search
 
 # similarity:              # `hillclimb similarity scores`: name (or my_score.py) -> params
 #   scores:

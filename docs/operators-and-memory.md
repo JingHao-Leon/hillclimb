@@ -44,7 +44,8 @@ hillclimb learns across searches. Memory is a module the climber's block
 names — `memory: files` by default — and the built-in one is file-based and
 git-versionable: it lives in your hillclimb dir, under `knowledge/`. How it
 behaves is `memory_params` in the block (the settings in backticks below);
-where it lives (`learning.dir`), whether coding agents get the lookup tool
+where it lives (`learning.dir`), whose knowledge may reach a search
+(`learning.scope`), whether coding agents get the lookup tool
 (`learning.tool`) and the master switch (`learning.enabled`, `--no-learning`)
 are yours, in the run defaults, `runs/config.yaml`:
 
@@ -88,9 +89,20 @@ climber:
   git diff) that replaces the raw claims block in draft prompts; credit
   flows to the playbook's source claims.
 - **Skills** (`skills`, default on) — winning solutions are
-  harvested into `knowledge/skills/` (2 best per family) and the best match
-  lands in the next search's first draft as `reference_solution.py`: proven
-  scaffolds, not prose hints.
+  harvested into `knowledge/skills/` (2 best per problem and metric) and the
+  best one lands in the next search's first draft on the SAME problem, scored
+  on the same metric, as `reference_solution.py`: proven scaffolds, not prose
+  hints. Another problem's code is never handed over, even in the same family:
+  its score measures something else. What crosses problems is text.
+- **Scope** (`learning.scope`) — `all` (the default): the family's cards plus
+  claims and playbooks from any problem that shares a concept; `family`: the
+  family's cards and claims only; `problem`: this problem's own.
+- **Scripted searches teach nothing** — a search whose coding agents are all
+  `dummy` or `toy` neither reads nor writes `knowledge/` (it tests the loop,
+  not the problem). `hillclimb knowledge prune --agent dummy --agent toy` (or
+  `--problem <id>`, `--search <run-id>/<search-id>`, `--dry-run`) removes what
+  earlier searches left: their cards, the claims in them, skills and credit,
+  then rebuilds the graph.
 - **Query tool** (`learning.tool`, default on) — coding agents
   are told they can run `hillclimb knowledge query "<keywords>"` mid-search
   to consult the memory before re-deriving something expensive.

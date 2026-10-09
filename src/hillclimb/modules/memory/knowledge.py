@@ -65,6 +65,10 @@ class KnowledgeCard(BaseModel):
     schema_version: int = SCHEMA_VERSION
     problem_id: str
     family: str
+    # the problem's identity across runs (`ProblemSpec.problem_key`) and the
+    # coding agents that wrote the search's code; empty on older cards
+    problem_key: str = ""
+    agents: list[str] = Field(default_factory=list)
     target: str = ""
     metric: str = ""
     higher_is_better: bool = True
@@ -208,6 +212,8 @@ def distill_card(
     return KnowledgeCard(
         problem_id=problem.problem_id,
         family=problem_family(problem.problem_id, target),
+        problem_key=getattr(problem, "problem_key", "") or "",
+        agents=sorted({c.agent.name for c in candidates if c.agent.name}),
         target=target,
         metric=problem.metric_name,
         higher_is_better=problem.higher_is_better,
@@ -236,14 +242,75 @@ def write_card(knowledge_dir: Path, card: KnowledgeCard) -> Path:
     return path
 
 
+def scripted(agents) -> bool:
+    """A search whose code only scripted agents wrote (dummy, toy): it says
+    nothing about the problem. Unknown (an older card) is not scripted."""
+    from hillclimb.agents import SCRIPTED_AGENTS
+
+    return bool(agents) and set(agents) <= SCRIPTED_AGENTS
+
+
+def same_problem(problem_id: str, problem_key: str, other_id: str, other_key: str) -> bool:
+    """The canonical key when both sides carry one, else the local id."""
+    if problem_key and other_key:
+        return problem_key == other_key
+    return problem_id == other_id
+
+
+def in_scope(card: KnowledgeCard, *, scope: str, problem_id: str, family: str, problem_key: str = "") -> bool:
+    """Whether a card may inform a search under `learning.scope`: `problem`
+    keeps this problem's own, `family` its family's, `all` everything the
+    caller loaded. A scripted search's card never does."""
+    if scripted(card.agents):
+        return False
+    if scope == "problem":
+        return same_problem(problem_id, problem_key, card.problem_id, card.problem_key)
+    if scope == "family":
+        return card.family == family or same_problem(problem_id, problem_key, card.problem_id, card.problem_key)
+    return True
+
+
+def iter_cards(knowledge_dir: Path):
+    """Every card under knowledge/ as (path, card), any family. Unreadable
+    files and other schema versions are skipped, as retrieval skips them."""
+    if not knowledge_dir.exists():
+        return
+    # knowledge/'s own folders beside the family folders hold no cards
+    reserved = {"credit", "skills", "papers", "playbooks"}
+    for path in sorted(knowledge_dir.glob("*/*.yaml")):
+        if path.parent.name in reserved:
+            continue
+        try:
+            data = yaml.safe_load(path.read_text()) or {}
+            if not isinstance(data, dict) or data.get("schema_version") != SCHEMA_VERSION or "problem_id" not in data:
+                continue
+            yield path, KnowledgeCard.model_validate(data)
+        except Exception:  # noqa: BLE001
+            continue
+
+
+def claim_in_scope(node, *, scope: str, problem_id: str, family: str) -> bool:
+    """`in_scope` for a claim's graph node, by the scope it was distilled in
+    (a paper claim names no problem: only `all` admits it)."""
+    if scope == "all":
+        return True
+    where = node.data.get("scope") or {}
+    if where.get("problem_id") == problem_id:
+        return True
+    return scope == "family" and where.get("family") == family
+
+
 def load_cards(
     knowledge_dir: Path,
     *,
     problem_id: str,
     family: str,
     limit: int = 10,
+    scope: str = "all",
+    problem_key: str = "",
 ) -> list[KnowledgeCard]:
-    """Cards for this problem (preferred) and its family, newest first."""
+    """Cards for this problem (preferred) and its family, newest first —
+    those `scope` admits (`in_scope`)."""
     if not knowledge_dir.exists():
         return []
     cards: list[KnowledgeCard] = []
@@ -252,9 +319,11 @@ def load_cards(
             data = yaml.safe_load(path.read_text()) or {}
             if data.get("schema_version") != SCHEMA_VERSION:
                 continue
-            cards.append(KnowledgeCard.model_validate(data))
+            card = KnowledgeCard.model_validate(data)
         except Exception:  # noqa: BLE001 — a corrupt card must never block a search
             continue
+        if in_scope(card, scope=scope, problem_id=problem_id, family=family, problem_key=problem_key):
+            cards.append(card)
     # quality-aware order: same problem first, then searches that actually
     # produced a non-baseline winner with real approaches, then recency —
     # a broken run must never outrank a podium run just by being newer
@@ -327,9 +396,13 @@ def load_live_cards(
     *,
     exclude_search_id: str = "",
     family: str = "",
+    scope: str = "all",
+    problem_id: str = "",
+    problem_key: str = "",
 ) -> list[KnowledgeCard]:
-    """Live cards published by the run's other searches, most useful first:
-    same problem family, then cards with real approaches, then progress."""
+    """Live cards published by the run's other searches that `scope` admits
+    (`in_scope`), most useful first: same problem family, then cards with
+    real approaches, then progress."""
     directory = run_dir / LIVE_DIRNAME
     if not directory.exists():
         return []
@@ -341,9 +414,11 @@ def load_live_cards(
             data = yaml.safe_load(path.read_text()) or {}
             if data.get("schema_version") != SCHEMA_VERSION:
                 continue
-            cards.append(KnowledgeCard.model_validate(data))
+            card = KnowledgeCard.model_validate(data)
         except Exception:  # noqa: BLE001 — a corrupt card must never block an operator
             continue
+        if in_scope(card, scope=scope, problem_id=problem_id or card.problem_id, family=family, problem_key=problem_key):
+            cards.append(card)
     cards.sort(
         key=lambda c: (c.family == family, bool(c.top_approaches), c.n_ok, c.finished_at),
         reverse=True,

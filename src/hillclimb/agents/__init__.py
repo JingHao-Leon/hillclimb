@@ -45,6 +45,9 @@ _AGENTS: dict[str, Callable[[str], Agent]] = {
 }
 # the names every hillclimb process knows; anything else was registered here
 _BUILTIN = frozenset(_AGENTS)
+# built-ins that follow a script instead of a model: what they find says
+# nothing about the problem, so a search run only on them writes no knowledge
+SCRIPTED_AGENTS = frozenset({"dummy", "toy"})
 
 
 def register_agent(name: str, factory: Callable[[], Agent], *, replace: bool = False) -> None:

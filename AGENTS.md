@@ -614,7 +614,13 @@ hold only the bases, which decide nothing. `_moved.py` maps pre-move module pref
   keeps nothing (a search still gets its own card). The harness takes
   `memory=` + `retrieved=`. The USER keeps `learning.enabled` (the switch
   over any climber; `--no-learning`), `learning.dir`, `learning.tool`,
-  `learning.claims_timeout_s`
+  `learning.claims_timeout_s`, `learning.scope` (`problem | family | all`,
+  `knowledge.in_scope` / `claim_in_scope`). The reference solution
+  (`skills.select_skill`) is ALWAYS the same problem's (problem key, metric,
+  direction), never a sibling's. A search on scripted agents only
+  (`agents.SCRIPTED_AGENTS`: dummy, toy; `api.scripted_only`) runs with
+  learning off; cards/skills carry `agents` + `problem_key` so retrieval
+  skips scripted ones and `hillclimb knowledge prune` can find them
 - Prompts: `prompts:` in the block names a dir that shadows built-in
   OPERATOR templates by name (`render(..., _override=dir)`, bound per
   search); `Climber.lint_prompts()` refuses harness-owned templates

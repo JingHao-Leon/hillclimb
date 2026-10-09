@@ -12,6 +12,7 @@
 │ distill      Run the LLM claims pass on a finished search.                                                           │
 │ graph        Explore the knowledge graph.                                                                            │
 │ live         Show the live cards concurrent searches in a run are sharing.                                           │
+│ prune        Remove what some searches taught: their cards, claims, skills and credit.                               │
 │ query        Read-only memory lookup (no model calls).                                                               │
 │ rebuild      Force-rebuild knowledge/graph.json from cards and registries.                                           │
 │ show         Render the prior experience a new search would receive.                                                 │

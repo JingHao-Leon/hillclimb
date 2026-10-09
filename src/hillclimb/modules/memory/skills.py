@@ -3,14 +3,17 @@
 Claims say what helped; skills ARE what helped. After a search whose selected
 candidate is a real winner (non-baseline, scored), its `solution.py` is
 copied verbatim into `knowledge/skills/<family>--<run-ref>/` with a metadata
-card — no model calls. The next search on the family (or, failing that, a
-concept-sibling problem) gets the best skill copied into its FIRST draft's
-candidate dir as `reference_solution.py`, with a prompt cue to adapt rather than
-resubmit. Later drafts stay reference-free so the search still explores.
+card — no model calls. The next search on the SAME problem, measured on the
+same metric in the same direction, gets the best skill copied into its FIRST
+draft's candidate dir as `reference_solution.py`, with a prompt cue to adapt
+rather than resubmit. Another problem's code is never handed over this way: a
+sibling's winner optimizes a different score (what transfers across problems
+are claims, in text). Later drafts stay reference-free so the search still
+explores. A search only scripted agents (dummy, toy) ran is never harvested.
 
-Kept deliberately small: at most SKILLS_PER_FAMILY skills per family,
-best-score-first (direction-aware) — a library of proven scaffolds, not an
-archive.
+Kept deliberately small: at most SKILLS_PER_PROBLEM skills per problem and
+metric, best-score-first (direction-aware) — a library of proven scaffolds,
+not an archive.
 """
 
 from __future__ import annotations
@@ -25,10 +28,10 @@ from pydantic import BaseModel, Field, model_validator
 from hillclimb.harness.candidate import utcnow
 from hillclimb.harness.direction import better
 from hillclimb.harness.direction import legacy_direction_key
-from hillclimb.modules.memory.knowledge import extract_libraries
+from hillclimb.modules.memory.knowledge import extract_libraries, same_problem, scripted
 
 SKILLS_DIRNAME = "skills"
-SKILLS_PER_FAMILY = 2
+SKILLS_PER_PROBLEM = 2
 SKILL_CODE_FILENAME = "skill.py"
 SKILL_META_FILENAME = "skill.yaml"
 SKILL_SCHEMA_VERSION = 1
@@ -38,6 +41,9 @@ class Skill(BaseModel):
     schema_version: int = SKILL_SCHEMA_VERSION
     problem_id: str
     family: str
+    # as on the card it was harvested with; empty on older skills
+    problem_key: str = ""
+    agents: list[str] = Field(default_factory=list)
     concepts: list[str] = Field(default_factory=list)
     metric: str = ""
     higher_is_better: bool = True
@@ -91,8 +97,11 @@ def harvest_skill(
     log,
 ) -> Path | None:
     """Post-search harvest (mechanical). Quality gate: only a scored,
-    non-baseline winner enters the library; within a family the library
-    keeps the SKILLS_PER_FAMILY best by validation score."""
+    non-baseline winner of a search a model worked on enters the library;
+    per problem and metric it keeps the SKILLS_PER_PROBLEM best by validation
+    score."""
+    if scripted(card.agents):
+        return None
     selected = journal.selected_candidate(problem.higher_is_better, selection)
     if selected is None or selected.operator == "baseline" or selected.val_score is None:
         return None
@@ -100,8 +109,14 @@ def harvest_skill(
     if not solution.exists():
         return None
     existing = load_skills(knowledge_dir, family=card.family)
-    scored = [(s, d) for s, d in existing if s.score is not None]
-    if len(scored) >= SKILLS_PER_FAMILY:
+    scored = [
+        (s, d) for s, d in existing
+        if s.score is not None and comparable(
+            s, problem_id=card.problem_id, problem_key=card.problem_key,
+            metric=card.metric, higher_is_better=card.higher_is_better,
+        )
+    ]
+    if len(scored) >= SKILLS_PER_PROBLEM:
         # direction-normalized score: smaller is better, so the worst is max
         worst_skill, worst_dir = max(
             scored,
@@ -116,6 +131,8 @@ def harvest_skill(
     skill = Skill(
         problem_id=card.problem_id,
         family=card.family,
+        problem_key=card.problem_key,
+        agents=card.agents,
         concepts=problem_concepts(kind, card.metric),
         metric=card.metric,
         higher_is_better=card.higher_is_better,
@@ -134,29 +151,40 @@ def harvest_skill(
     return skill_dir
 
 
+def comparable(
+    skill: Skill, *, problem_id: str, problem_key: str, metric: str, higher_is_better: bool
+) -> bool:
+    """A skill whose score means the same as this search's: the same problem,
+    the same metric (where both name one), the same direction."""
+    return (
+        same_problem(problem_id, problem_key, skill.problem_id, skill.problem_key)
+        and (not metric or not skill.metric or metric == skill.metric)
+        and skill.higher_is_better == higher_is_better
+    )
+
+
 def select_skill(
     knowledge_dir: Path,
     *,
     family: str,
-    concepts: list[str],
+    problem_id: str,
+    problem_key: str = "",
+    metric: str = "",
     higher_is_better: bool,
 ) -> tuple[Skill, Path] | None:
-    """Same-family skills compete on score (comparable metric); across
-    families scores don't compare, so concept-overlapping skills fall back
-    to recency."""
-    same_family = [
-        (s, d) for s, d in load_skills(knowledge_dir, family=family) if s.score is not None
-    ]
-    if same_family:
-        return min(
-            same_family,
-            key=lambda pair: (-1 if higher_is_better else 1) * pair[0].score,
+    """The best-scoring skill harvested on THIS problem and metric, or None.
+    A family sibling's or a concept neighbour's winner is never handed over:
+    its score measures something else, and a first draft scaffolded on it
+    climbs the wrong hill."""
+    same = [
+        (s, d) for s, d in load_skills(knowledge_dir, family=family)
+        if s.score is not None
+        and not scripted(s.agents)
+        and comparable(
+            s, problem_id=problem_id, problem_key=problem_key,
+            metric=metric, higher_is_better=higher_is_better,
         )
-    wanted = set(concepts)
-    siblings = [
-        (s, d) for s, d in load_skills(knowledge_dir)
-        if s.family != family and wanted & set(s.concepts)
     ]
-    if siblings:
-        return max(siblings, key=lambda pair: pair[0].created_at)
-    return None
+    if not same:
+        return None
+    return min(same, key=lambda pair: (-1 if higher_is_better else 1) * pair[0].score)

@@ -659,6 +659,19 @@ def _preflight_pi_routes(
             )
 
 
+def scripted_only(config: Config) -> bool:
+    """Whether every coding agent a search may call follows a script (`dummy`,
+    `toy`): such a search tests the loop, so it neither reads nor writes
+    cross-search knowledge. A memory pass's own route (`distill`) does not count."""
+    from hillclimb.agents import SCRIPTED_AGENTS
+
+    agents = {config.agent} | {
+        route.agent for name, route in config.routing.items()
+        if route.agent and name not in ("distill", "consolidate")
+    }
+    return agents <= SCRIPTED_AGENTS
+
+
 class Search:
     """One search, open in this process: everything the engine sets up around
     a `Harness` (memory, store, journal, status + heartbeat, agents, evaluator,
@@ -728,6 +741,10 @@ class Search:
             self.config = self.config.model_copy(deep=True)
             self.config.learning.enabled = False  # this search neither reads nor writes memory
             log("memory: none (this climber runs without cross-search memory)")
+        elif self.config.learning.enabled and scripted_only(self.config):
+            self.config = self.config.model_copy(deep=True)
+            self.config.learning.enabled = False
+            log("memory: off (scripted coding agents only: nothing learned about the problem)")
         memory.bind(MemoryEnv(
             config=self.config, problem=self.problem, search_dir=search_dir, target=self.target, log=log,
         ))

@@ -12,6 +12,21 @@
   with "estimated subscription cost reached". Prices match a provider's own model ids
   (`gpt-5.1-codex`, `claude-sonnet-4-5-20250929`) as well as OpenRouter's; the Codex CLI's
   unnamed default model still shows `-`.
+- **A first draft only gets this problem's own code.** The reference solution memory hands
+  the first draft (`reference_solution.py`) comes from an earlier search on the same problem,
+  scored on the same metric in the same direction. A family sibling's winner (`foo-solar` for
+  `foo-wind`) and a concept neighbour's are no longer handed over, and one no longer evicts
+  the other from the skill library (2 kept per problem and metric, not per family).
+- **Scripted searches teach nothing.** A search whose coding agents are all `dummy` or `toy`
+  neither reads nor writes `knowledge/`; cards and skills record the agents that wrote them,
+  and retrieval skips scripted ones.
+- **`learning.scope: problem | family | all`** sets whose knowledge reaches a search: `all`
+  (the default, as before) also brings claims and playbooks from problems sharing a concept,
+  `family` keeps the problem family's, `problem` only this problem's own.
+- **`hillclimb knowledge prune`** removes what some searches taught — `--agent dummy --agent
+  toy`, `--problem <id>`, `--search <run-id>/<search-id>`, `--dry-run` — their cards (and the
+  claims in them), skills and credit records, then rebuilds the graph. An older card names no
+  agents; `--agent` then reads its search's record in `runs/`.
 
 ## 0.8.2 — 2026-10-08
 

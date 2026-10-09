@@ -126,6 +126,7 @@ def knowledge_show(target: str = typer.Argument(..., help="Problem target, e.g. 
     cards = load_cards(
         knowledge_dir, problem_id=problem.problem_id,
         family=problem_family(problem.problem_id, str(target)),
+        scope=config.learning.scope, problem_key=problem.problem_key,
     )
     if not cards:
         say(f"no knowledge cards for [path]{_m(problem.problem_id)}[/] in [path]{_m(knowledge_dir)}[/]")
@@ -135,6 +136,88 @@ def knowledge_show(target: str = typer.Argument(..., help="Problem target, e.g. 
     # as many cards as a search's prompts would show (the folder's memory_params)
     max_cards = config.climber_params("memory_params").get("max_cards", FilesMemory.DEFAULTS["max_cards"])
     typer.echo(render_prior_experience(cards, max_cards=int(max_cards)))
+
+
+@knowledge_app.command("prune")
+def knowledge_prune(
+    agent: list[str] = typer.Option(
+        [], "--agent", help="Searches run only on these coding agents, e.g. --agent dummy --agent toy"
+    ),
+    problem: list[str] = typer.Option([], "--problem", help="Searches on this problem (its id or problem key)"),
+    search: list[str] = typer.Option([], "--search", help="One search, as <run-id>/<search-id>"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List what would go; delete nothing"),
+):
+    """Remove what some searches taught: their cards, claims, skills and credit.
+
+    A card goes when it matches every filter given. An older card does not
+    name its coding agents; --agent then reads the search's record in runs/,
+    and a card whose search is gone is kept. The graph is
+    rebuilt afterwards; playbooks built from the removed claims stay until
+    the next `hillclimb knowledge consolidate`.
+    """
+    from hillclimb.api import resolve_knowledge_dir
+    from hillclimb.modules.memory.credit import credit_event_path
+    from hillclimb.modules.memory.graph import rebuild_graph
+    from hillclimb.modules.memory.knowledge import iter_cards
+    from hillclimb.modules.memory.skills import load_skills
+
+    if not (agent or problem or search):
+        fail("name what to prune: [cmd]--agent[/], [cmd]--problem[/] or [cmd]--search[/]")
+        raise typer.Exit(2)
+    config = common.load_config()
+    knowledge_dir = resolve_knowledge_dir(config)
+    if knowledge_dir is None:
+        fail("learning is disabled or no [path]knowledge/[/] dir resolvable")
+        raise typer.Exit(1)
+    store = open_store(config) if agent else None
+    unknown = 0
+
+    def agents_of(card) -> set[str] | None:
+        if card.agents:
+            return set(card.agents)
+        run_id, _, search_id = card.run_ref.partition("/")
+        record = store.search((run_id, search_id)) if store is not None and search_id else None
+        return {record.meta.agent} if record is not None and record.meta.agent else None
+
+    doomed = []
+    for path, card in iter_cards(knowledge_dir):
+        if problem and card.problem_id not in problem and card.problem_key not in problem:
+            continue
+        if search and card.run_ref not in search:
+            continue
+        if agent:
+            ran_on = agents_of(card)
+            if ran_on is None:
+                unknown += 1
+                continue
+            if not ran_on <= set(agent):
+                continue
+        doomed.append((path, card))
+    refs = {card.run_ref for _, card in doomed}
+    skills = [skill_dir for skill, skill_dir in load_skills(knowledge_dir) if skill.run_ref in refs]
+    credits = [path for path in (credit_event_path(knowledge_dir, ref) for ref in sorted(refs)) if path.exists()]
+    verb = "would remove" if dry_run else "removed"
+    for path, card in doomed:
+        say(f"[note]{verb}[/] [path]{_m(path.relative_to(knowledge_dir))}[/] [note]({_m(card.run_ref)})[/]")
+    for path in [*skills, *credits]:
+        say(f"[note]{verb}[/] [path]{_m(path.relative_to(knowledge_dir))}[/]")
+    if not dry_run:
+        import shutil
+
+        for path, _ in doomed:
+            path.unlink()
+        for skill_dir in skills:
+            shutil.rmtree(skill_dir, ignore_errors=True)
+        for path in credits:
+            path.unlink()
+        if doomed:
+            rebuild_graph(knowledge_dir, module=_graph_module(config))
+    say(
+        f"[head]{verb} {len(doomed)} card(s)[/], {len(skills)} skill(s), {len(credits)} credit record(s)"
+        + (" [note](graph rebuilt)[/]" if doomed and not dry_run else "")
+    )
+    if unknown:
+        warn(f"kept {unknown} card(s) whose coding agent is unknown (no agents on the card, no search in runs/)")
 
 
 @knowledge_app.command("distill")

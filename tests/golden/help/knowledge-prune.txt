@@ -1,0 +1,19 @@
+                                                                                                                        
+ Usage: root knowledge prune [OPTIONS]                                                                                  
+                                                                                                                        
+ Remove what some searches taught: their cards, claims, skills and credit.                                              
+                                                                                                                        
+ A card goes when it matches every filter given. An older card does not                                                 
+ name its coding agents; --agent then reads the search's record in runs/,                                               
+ and a card whose search is gone is kept. The graph is                                                                  
+ rebuilt afterwards; playbooks built from the removed claims stay until                                                 
+ the next `hillclimb knowledge consolidate`.                                                                            
+                                                                                                                        
+╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ --agent            TEXT  Searches run only on these coding agents, e.g. --agent dummy --agent toy                    │
+│ --problem          TEXT  Searches on this problem (its id or problem key)                                            │
+│ --search           TEXT  One search, as <run-id>/<search-id>                                                         │
+│ --dry-run                List what would go; delete nothing                                                          │
+│ --help     -h            Show this message and exit.                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
