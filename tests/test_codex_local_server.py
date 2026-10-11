@@ -19,9 +19,13 @@ from hillclimb.agents.codex_cli import CodexCliAgent
 
 
 @pytest.mark.skipif(shutil.which("codex") is None, reason="requires an installed Codex CLI")
-def test_real_codex_uses_loopback_responses_provider(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("api_key", [None, "test-prefix:test-suffix"])
+def test_real_codex_uses_loopback_responses_provider(tmp_path: Path, monkeypatch, api_key):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    monkeypatch.delenv("HILLCLIMB_LOCAL_API_KEY", raising=False)
+    if api_key is None:
+        monkeypatch.delenv("HILLCLIMB_LOCAL_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("HILLCLIMB_LOCAL_API_KEY", api_key)
     requests = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -33,7 +37,7 @@ def test_real_codex_uses_loopback_responses_provider(tmp_path: Path, monkeypatch
                 self.send_error(404)
                 return
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            requests.append(payload)
+            requests.append((payload, self.headers.get("Authorization")))
             message = {"id": "msg_test", "type": "message", "role": "assistant",
                        "status": "completed", "content": [
                            {"type": "output_text", "text": "HARNESS-PONG", "annotations": []},
@@ -82,9 +86,13 @@ def test_real_codex_uses_loopback_responses_provider(tmp_path: Path, monkeypatch
             candidate_dir=candidate_dir, timeout_s=60, model="test-responses-model",
         ))
         assert result.ok, result.error_message
-        assert requests and all(r["model"] == "test-responses-model" for r in requests)
+        assert requests and all(payload["model"] == "test-responses-model" for payload, _ in requests)
+        assert all(auth == (f"Bearer {api_key}" if api_key else None) for _, auth in requests)
         assert "HARNESS-PONG" in (candidate_dir / "agent_stream.jsonl").read_text()
-        assert "model_provider=local" in json.loads((candidate_dir / "agent_raw.json").read_text())["cmd"]
+        raw = (candidate_dir / "agent_raw.json").read_text()
+        assert "model_provider=local" in json.loads(raw)["cmd"]
+        if api_key:
+            assert api_key not in raw
     finally:
         server.shutdown()
         server.server_close()
