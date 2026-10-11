@@ -929,9 +929,10 @@ def smoke(
     from hillclimb.harness.routing import AgentPool, Router
 
     agent_instance = get_agent(
-        config.agent, auth=config.agent_auth, pi_models_file=config.pi.models_file
+        config.agent, auth=config.agent_auth, pi_models_file=config.pi.models_file,
+        local_base_url=config.local.base_url,
     )
-    agents = AgentPool(pi_models_file=config.pi.models_file)
+    agents = AgentPool(pi_models_file=config.pi.models_file, local_base_url=config.local.base_url)
     agents.seed(config.agent, config.agent_auth, agent_instance)
     journal = Journal(open_store(config).journal(key_for(search_dir)))
     evaluator = build_evaluator(config, problem, search_dir, journal, log=common.engine_log)

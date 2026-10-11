@@ -789,13 +789,14 @@ class Search:
             config.agent,
             auth=config.agent_auth,
             pi_models_file=config.pi.models_file,
+            local_base_url=config.local.base_url,
         )
         if hasattr(agent_obj, "abort"):
             agent_obj.abort = abort
         from hillclimb.harness.routing import AgentPool, Router
 
         agents = AgentPool(
-            abort=abort, pi_models_file=config.pi.models_file
+            abort=abort, pi_models_file=config.pi.models_file, local_base_url=config.local.base_url
         )
         agents.seed(config.agent, config.agent_auth, agent_obj)
         router = Router(config)

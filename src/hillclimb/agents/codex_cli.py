@@ -13,7 +13,10 @@ import subprocess
 import tempfile
 import threading
 import time
+import warnings
+from ipaddress import ip_address
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from hillclimb.agents.base import AgentRequest, AgentResult
 from hillclimb.agents.claude_code import (
@@ -37,6 +40,44 @@ OPENROUTER_PROVIDER = (
     f'base_url="{OPENROUTER_BASE_URL}",'
     'env_key="OPENROUTER_API_KEY",wire_api="responses"}'
 )
+
+
+LOCAL_KEY_ENV = "HILLCLIMB_LOCAL_API_KEY"
+
+
+def local_provider_args(base_url: str, *, has_key: bool) -> list[str]:
+    """Codex overrides for a keyless or env-keyed OpenAI Responses server.
+
+    JSON-quoted strings are also TOML basic strings. Never put the key value
+    in the command (which is saved in agent_raw.json).
+    """
+    options = [
+        'name="Local model"',
+        f"base_url={json.dumps(base_url)}",
+        'wire_api="responses"',
+    ]
+    if has_key:
+        options.append(f'env_key="{LOCAL_KEY_ENV}"')
+    return ["-c", "model_providers.local={" + ",".join(options) + "}", "-c", "model_provider=local"]
+
+
+def warn_remote_http(base_url: str) -> None:
+    url = urlsplit(base_url)
+    host = url.hostname or ""
+    if url.scheme != "http" or host.lower() == "localhost":
+        return
+    try:
+        if ip_address(host).is_loopback:
+            return
+    except ValueError:
+        pass
+    warnings.warn(
+        "A remote local-model provider uses HTTP: prompts and candidate code "
+        "cross the network in cleartext and can be intercepted. Use HTTPS "
+        "for remote providers.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
 
 
 # written once `hillclimb connect codex` has logged codex in to its operator
@@ -76,6 +117,10 @@ def codex_env(auth: str = "subscription", cpus: int = 1) -> dict[str, str]:
             )
         # billing must not fall back to an inherited OpenAI account
         env.pop("OPENAI_API_KEY", None)
+    elif auth == "local":
+        # Do not inherit keys for cloud providers on the self-hosted route.
+        for key in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"):
+            env.pop(key, None)
     elif auth != "api-key":
         # An inherited key can take precedence over the interactive login.
         env.pop("OPENAI_API_KEY", None)
@@ -153,7 +198,7 @@ CODEX_DEFAULT_LABEL = "codex-default"  # what the journal says when the CLI chos
 
 def native_model(model: str, auth: str = "subscription") -> str | None:
     """The `--model` to pass, or None to let the Codex CLI pick its default."""
-    if auth == "openrouter":
+    if auth in {"openrouter", "local"}:
         return model
     if model in CLAUDE_MODELS or model.startswith("claude") or model == CODEX_DEFAULT_LABEL:
         return None
@@ -296,15 +341,23 @@ class CodexCliAgent:
         codex_bin: str = "codex",
         auth: str = "subscription",
         abort: "threading.Event | None" = None,
+        local_base_url: str | None = None,
     ):
         self.codex_bin = codex_bin
         self.auth = auth
         self.abort = abort
+        self.local_base_url = local_base_url
+        if auth == "local" and local_base_url:
+            warn_remote_http(local_base_url)
 
     def _command(self, request: AgentRequest) -> list[str]:
         cmd = [self.codex_bin]
         if self.auth == "openrouter":
             cmd += ["-c", OPENROUTER_PROVIDER, "-c", "model_provider=openrouter"]
+        elif self.auth == "local":
+            if not self.local_base_url:
+                raise ValueError("agent_auth: local needs local.base_url")
+            cmd += local_provider_args(self.local_base_url, has_key=bool(os.environ.get(LOCAL_KEY_ENV)))
         native = native_model(request.model, self.auth)
         if native is not None:
             cmd += ["--model", native]
@@ -333,6 +386,16 @@ class CodexCliAgent:
         return cmd
 
     def invoke(self, request: AgentRequest) -> AgentResult:
+        if self.auth == "local" and not request.allow_internet:
+            # Codex owns its network sandbox; Hillclimb cannot allowlist just
+            # the model endpoint inside it. Do not turn the whole network on
+            # behind an operator's explicit no-internet setting.
+            return AgentResult(
+                ok=False,
+                error_kind="error",
+                error_message=("codex with agent_auth: local needs allow_internet_for_agents: true "
+                               "to reach the provider (Codex cannot allowlist one host)"),
+            )
         cmd = self._command(request)
         candidate_dir = Path(request.candidate_dir)
         stream_path = candidate_dir / STREAM_FILE

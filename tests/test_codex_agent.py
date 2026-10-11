@@ -231,6 +231,55 @@ def test_openrouter_auth_adds_the_provider_overrides(tmp_path: Path, monkeypatch
     assert 'env_key="OPENROUTER_API_KEY"' in provider[0]
 
 
+def test_local_auth_routes_keyless_to_responses_and_warns_on_remote_http(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("HILLCLIMB_LOCAL_API_KEY", raising=False)
+    with pytest.warns(RuntimeWarning, match="cleartext"):
+        agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK), auth="local",
+                              local_base_url="http://provider.example:8080/v1")
+    request = make_request(tmp_path)
+    assert agent.invoke(request).ok
+    cmd = json.loads((request.candidate_dir / "agent_raw.json").read_text())["cmd"]
+    assert "model_provider=local" in cmd
+    provider = next(arg for arg in cmd if arg.startswith("model_providers.local="))
+    assert 'base_url="http://provider.example:8080/v1"' in provider
+    assert 'wire_api="responses"' in provider
+    assert "env_key" not in provider
+    assert cmd[cmd.index("--model") + 1] == request.model
+
+
+def test_local_key_stays_in_env_not_argv_or_journal(tmp_path: Path, monkeypatch):
+    from hillclimb.agents.codex_cli import LOCAL_KEY_ENV, codex_env
+
+    monkeypatch.setenv(LOCAL_KEY_ENV, "test-private-local-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "cloud-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "other-cloud-key")
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK), auth="local",
+                          local_base_url="http://localhost:8080/v1")
+    request = make_request(tmp_path)
+    assert agent.invoke(request).ok
+    raw = (request.candidate_dir / "agent_raw.json").read_text()
+    stream = (request.candidate_dir / "agent_stream.jsonl").read_text()
+    assert "test-private-local-key" not in raw + stream
+    cmd = json.loads(raw)["cmd"]
+    assert f'env_key="{LOCAL_KEY_ENV}"' in next(
+        arg for arg in cmd if arg.startswith("model_providers.local=")
+    )
+    env = codex_env("local")
+    assert env[LOCAL_KEY_ENV] == "test-private-local-key"
+    assert "OPENAI_API_KEY" not in env and "OPENROUTER_API_KEY" not in env
+
+
+def test_local_route_does_not_override_no_internet(tmp_path: Path):
+    agent = CodexCliAgent(codex_bin="/nonexistent/codex", auth="local",
+                          local_base_url="http://localhost:8080/v1")
+    request = make_request(tmp_path)
+    request.allow_internet = False
+    result = agent.invoke(request)
+    assert not result.ok
+    assert "allow_internet_for_agents: true" in result.error_message
+    assert not (request.candidate_dir / "agent_raw.json").exists()
+
+
 def test_subscription_auth_has_no_provider_overrides(tmp_path: Path):
     agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK), auth="subscription")
     request = make_request(tmp_path)

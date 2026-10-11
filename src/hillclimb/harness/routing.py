@@ -126,9 +126,11 @@ class AgentPool:
         self,
         abort: threading.Event | None = None,
         pi_models_file: Path | None = None,
+        local_base_url: str | None = None,
     ):
         self._abort = abort
         self._pi_models_file = pi_models_file
+        self._local_base_url = local_base_url
         self._instances: dict[tuple[str, str], Agent] = {}
         self._lock = threading.Lock()
 
@@ -142,7 +144,8 @@ class AgentPool:
         with self._lock:
             if key not in self._instances:
                 agent = get_agent(
-                    name, auth=auth, pi_models_file=self._pi_models_file
+                    name, auth=auth, pi_models_file=self._pi_models_file,
+                    local_base_url=self._local_base_url,
                 )
                 if self._abort is not None and hasattr(agent, "abort"):
                     agent.abort = self._abort

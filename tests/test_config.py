@@ -128,6 +128,27 @@ def test_unknown_agent_auth_is_rejected():
         Config(agent_auth="open-router")
 
 
+def test_local_codex_provider_requires_valid_explicit_url():
+    config = Config(agent="codex", agent_auth="local", local={"base_url": "http://127.0.0.1:8080/v1"})
+    assert config.local.base_url == "http://127.0.0.1:8080/v1"
+    Config(agent="codex", agent_auth="local", local={"base_url": "https://[2001:db8::1]:8443/v1"})
+    with pytest.raises(ValueError, match="local.base_url"):
+        Config(agent="codex", agent_auth="local")
+    with pytest.raises(ValueError, match="needs agent: codex"):
+        Config(agent="pi", agent_auth="local", local={"base_url": "http://localhost:8080/v1"})
+    with pytest.raises(ValueError, match="routing.draft"):
+        Config(agent="codex", agent_auth="local", local={"base_url": "http://localhost/v1"},
+               routing={"draft": {"agent": "pi"}})
+    for url in ("", "not_a_url", "ftp://example.com/v1", "http://user:secret@localhost/v1",
+                "http://example.com; bad/v1", "http://host:99999/v1", "http://host/v1?secret=key",
+                "http://host/v1\nother", "http://host:0/v1"):
+        with pytest.raises(ValueError, match="local.base_url"):
+            Config(agent="codex", agent_auth="local", local={"base_url": url})
+    with pytest.raises(ValueError):
+        Config(agent="codex", agent_auth="local", local={"base_url": "http://localhost/v1",
+                                                       "wire_api": "chat"})
+
+
 def test_sampling_requires_pi_and_rejects_route_typos():
     import pytest
 

@@ -502,6 +502,41 @@ class EinsteinArenaConfig(BaseModel):
     request_timeout_s: float = Field(default=30.0, gt=0, le=300)
 
 
+class LocalProviderConfig(BaseModel):
+    """OpenAI Responses endpoint for Codex. Credentials live only in the
+    HILLCLIMB_LOCAL_API_KEY environment variable (or a gitignored .env)."""
+
+    model_config = ConfigDict(extra="forbid")
+    base_url: str | None = None
+
+    @field_validator("base_url")
+    @classmethod
+    def _valid_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        from ipaddress import ip_address
+        import re
+        from urllib.parse import urlsplit
+
+        if not value or any(ch.isspace() or ord(ch) < 32 for ch in value):
+            raise ValueError("local.base_url must be a plain HTTP(S) URL")
+        try:
+            url = urlsplit(value)
+            host, port = url.hostname, url.port
+        except ValueError as exc:
+            raise ValueError("local.base_url has an invalid host or port") from exc
+        if url.scheme not in {"http", "https"} or not host or "@" in url.netloc:
+            raise ValueError("local.base_url needs an HTTP(S) host without credentials")
+        if url.query or url.fragment or port == 0:
+            raise ValueError("local.base_url must not have a query, fragment or port 0")
+        try:
+            ip_address(host)
+        except ValueError:
+            if not re.fullmatch(r"[a-zA-Z0-9._-]+", host):
+                raise ValueError("local.base_url has an invalid hostname") from None
+        return value
+
+
 class SimilarityConfig(BaseModel):
     """Similarity scores `hillclimb similarity scores` computes, name -> params.
     A name is a registry entry (solution-card, api-calls, code-tokens), a
@@ -589,7 +624,7 @@ class SandboxConfig(BaseModel):
     local_ports: list[int] = Field(default_factory=list)  # localhost ports left open without network
 
 
-AGENT_AUTHS = ("subscription", "api-key", "openrouter")
+AGENT_AUTHS = ("subscription", "api-key", "openrouter", "local")
 
 
 class Config(BaseModel):
@@ -619,6 +654,7 @@ class Config(BaseModel):
     store: StoreConfig = StoreConfig()
     emflow: EmflowConfig = EmflowConfig()
     einsteinarena: EinsteinArenaConfig = EinsteinArenaConfig()
+    local: LocalProviderConfig = LocalProviderConfig()
     sandbox: SandboxConfig = SandboxConfig()
     pi: PiConfig = PiConfig()
     similarity: SimilarityConfig = SimilarityConfig()
@@ -768,6 +804,11 @@ class Config(BaseModel):
                     f"{where}: agent_auth: openrouter needs agent: codex or pi, "
                     f"not {agent!r}"
                 )
+            if auth == "local":
+                if agent != "codex":
+                    raise ValueError(f"{where}: agent_auth: local needs agent: codex, not {agent!r}")
+                if not self.local.base_url:
+                    raise ValueError(f"{where}: agent_auth: local needs local.base_url")
         for name, route in self.routing.items():
             agent = effective_agent(name, route)
             sampling = route.sampling
