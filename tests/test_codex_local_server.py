@@ -87,6 +87,7 @@ def test_real_codex_uses_loopback_responses_provider(tmp_path: Path, monkeypatch
         ))
         assert result.ok, result.error_message
         assert requests and all(payload["model"] == "test-responses-model" for payload, _ in requests)
+        assert all(tool["type"] == "function" for payload, _ in requests for tool in payload["tools"])
         assert all(auth == (f"Bearer {api_key}" if api_key else None) for _, auth in requests)
         assert "HARNESS-PONG" in (candidate_dir / "agent_stream.jsonl").read_text()
         raw = (candidate_dir / "agent_raw.json").read_text()

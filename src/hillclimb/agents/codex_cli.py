@@ -358,6 +358,9 @@ class CodexCliAgent:
             if not self.local_base_url:
                 raise ValueError("agent_auth: local needs local.base_url")
             cmd += local_provider_args(self.local_base_url, has_key=bool(os.environ.get(LOCAL_KEY_ENV)))
+            # Self-hosted Responses servers such as LM Studio accept function
+            # tools, but not Codex's namespace or hosted web-search tools.
+            cmd += ["--disable", "multi_agent", "-c", 'web_search="disabled"']
         native = native_model(request.model, self.auth)
         if native is not None:
             cmd += ["--model", native]

@@ -244,6 +244,8 @@ def test_local_auth_routes_keyless_to_responses_and_warns_on_remote_http(tmp_pat
     assert 'base_url="http://provider.example:8080/v1"' in provider
     assert 'wire_api="responses"' in provider
     assert "env_key" not in provider
+    assert cmd[cmd.index("--disable") + 1] == "multi_agent"
+    assert 'web_search="disabled"' in cmd
     assert cmd[cmd.index("--model") + 1] == request.model
 
 

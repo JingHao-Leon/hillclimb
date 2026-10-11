@@ -200,7 +200,10 @@ stays: hillclimb never touches it.
 
 Install the Codex CLI (`npm install -g @openai/codex`). The server must support
 OpenAI's **Responses API**, including streaming and tool calls; a Chat
-Completions-only server cannot drive Codex. In the hillclimb dir's
+Completions-only server cannot drive Codex. For this route Codex advertises
+only function tools: its multi-agent namespace
+and hosted web-search tools are disabled because many self-hosted Responses
+servers (including LM Studio) reject those tool types. In the hillclimb dir's
 `hillclimb.yaml`:
 
 ```yaml
