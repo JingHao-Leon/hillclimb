@@ -50,7 +50,7 @@ AGENT_FOR = {"claude": "claude-code", "codex": "codex", "pi": "pi"}
 # full vocabulary; claude-code has no OpenRouter route)
 AUTHS_FOR = {
     "claude": ("subscription", "api-key"),
-    "codex": ("subscription", "api-key", "openrouter"),
+    "codex": ("subscription", "api-key", "openrouter", "local"),
     "pi": ("subscription", "api-key", "openrouter"),
     "openrouter": ("openrouter",),
 }
@@ -237,6 +237,13 @@ def _check_codex(auth: str) -> Status:
         key = _check_openrouter("openrouter")
         detail = f"codex on OpenRouter ({key.detail})" if key.ok else key.detail
         return Status("codex", auth, key.state, detail, key.fix)
+    if auth == "local":
+        # no login: the self-hosted server is the credential, and only the
+        # ping (which knows local.base_url) can tell whether it answers
+        from hillclimb.agents.codex_cli import LOCAL_KEY_ENV
+
+        key = "key set" if os.environ.get(LOCAL_KEY_ENV) else "no key"
+        return Status("codex", auth, "ready", f"codex on a self-hosted server ({key})")
     try:
         # materializes the isolated CODEX_HOME, exactly as the first operator
         # call would: the check and the search read the same credential
@@ -642,7 +649,14 @@ def import_credentials(target: str, auth: str, models_file: Path | None = None) 
     return None
 
 
-def ping(agent_name: str, auth: str, model: str, *, models_file: Path | None = None):  # noqa: D417
+def ping(  # noqa: D417
+    agent_name: str,
+    auth: str,
+    model: str,
+    *,
+    models_file: Path | None = None,
+    local_base_url: str | None = None,
+):
     """One real, tool-free operator call — the proof that the credential, the
     model id and the provider route all work together. Costs a handful of
     tokens, which is the cheapest honest answer available; a key that is
@@ -660,7 +674,9 @@ def ping(agent_name: str, auth: str, model: str, *, models_file: Path | None = N
     if work_dir.exists():
         shutil.rmtree(work_dir, ignore_errors=True)
     work_dir.mkdir(parents=True, exist_ok=True)
-    agent = get_agent(agent_name, auth=auth, pi_models_file=models_file)
+    agent = get_agent(
+        agent_name, auth=auth, pi_models_file=models_file, local_base_url=local_base_url
+    )
     request = AgentRequest(
         operator="draft",  # the routed operators all look alike to a provider
         prompt=PING_PROMPT,

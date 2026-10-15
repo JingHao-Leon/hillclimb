@@ -128,6 +128,18 @@ def test_unknown_agent_auth_is_rejected():
         Config(agent_auth="open-router")
 
 
+def test_local_provider_flags_only_cleartext_to_another_machine():
+    def cleartext(url):
+        return Config(agent="codex", agent_auth="local", local={"base_url": url}).local.cleartext_remote
+
+    assert cleartext("http://provider.example:8080/v1")
+    assert cleartext("http://10.0.0.5:8080/v1")
+    assert not cleartext("http://localhost:8080/v1")
+    assert not cleartext("http://127.0.0.1:8080/v1")
+    assert not cleartext("http://[::1]:8080/v1")
+    assert not cleartext("https://provider.example/v1")
+
+
 def test_local_codex_provider_requires_valid_explicit_url():
     config = Config(agent="codex", agent_auth="local", local={"base_url": "http://127.0.0.1:8080/v1"})
     assert config.local.base_url == "http://127.0.0.1:8080/v1"

@@ -221,14 +221,16 @@ model: my-model-id
 
 Set `HILLCLIMB_LOCAL_API_KEY` in the environment or in a gitignored `.env`
 beside `hillclimb.yaml` if the server requires a key; otherwise no key is sent.
-Keys are never written to the run config, command line or journal. No
-`hillclimb connect` login is needed. Try `hillclimb run <problem> --budget 10m`
-and `hillclimb watch`. Codex applies its own sandbox and cannot restrict its
-network access to just the model host; `allow_internet_for_agents: false` is
-therefore incompatible with this route (the run fails rather than silently
-opening the network). HTTP to a non-loopback host sends prompts and candidate
-code in cleartext: use HTTPS for remote servers. For pi with a local server,
-use `pi.models_file` as described below.
+Keys are never written to the run config, command line or journal. There is
+no login: `hillclimb connect codex --auth local --model my-model-id` pings the
+server with one tool-free call to check the route. `model:` must be an id the
+server serves: a search refuses to start on a Claude name such as the default
+`sonnet`. Try `hillclimb run <problem> --budget 10m` and `hillclimb watch`.
+`allow_internet_for_agents: false` works as with the other codex routes: it
+cuts the network for the commands codex runs, while codex itself still reaches
+the model server. HTTP to a non-loopback host sends prompts and candidate code
+in cleartext (the search log warns): use HTTPS for remote servers. For pi with
+a local server, use `pi.models_file` as described below.
 
 ## Cheap operators through OpenRouter
 

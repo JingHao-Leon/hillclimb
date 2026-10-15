@@ -514,7 +514,6 @@ class LocalProviderConfig(BaseModel):
     def _valid_url(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        from ipaddress import ip_address
         import re
         from urllib.parse import urlsplit
 
@@ -529,12 +528,34 @@ class LocalProviderConfig(BaseModel):
             raise ValueError("local.base_url needs an HTTP(S) host without credentials")
         if url.query or url.fragment or port == 0:
             raise ValueError("local.base_url must not have a query, fragment or port 0")
-        try:
-            ip_address(host)
-        except ValueError:
-            if not re.fullmatch(r"[a-zA-Z0-9._-]+", host):
-                raise ValueError("local.base_url has an invalid hostname") from None
+        if _host_ip(host) is None and not re.fullmatch(r"[a-zA-Z0-9._-]+", host):
+            raise ValueError("local.base_url has an invalid hostname")
         return value
+
+    @property
+    def cleartext_remote(self) -> bool:
+        """Plain HTTP to a host off this machine: prompts and candidate code
+        cross the network readable by anyone on the path."""
+        if not self.base_url:
+            return False
+        from urllib.parse import urlsplit
+
+        url = urlsplit(self.base_url)
+        host = url.hostname or ""
+        if url.scheme != "http" or host.lower() == "localhost":
+            return False
+        ip = _host_ip(host)
+        return ip is None or not ip.is_loopback
+
+
+def _host_ip(host: str):
+    """The host as an IP address, or None when it is a name."""
+    from ipaddress import ip_address
+
+    try:
+        return ip_address(host)
+    except ValueError:
+        return None
 
 
 class SimilarityConfig(BaseModel):

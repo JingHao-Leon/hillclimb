@@ -13,10 +13,7 @@ import subprocess
 import tempfile
 import threading
 import time
-import warnings
-from ipaddress import ip_address
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from hillclimb.agents.base import AgentRequest, AgentResult
 from hillclimb.agents.claude_code import (
@@ -61,25 +58,6 @@ def local_provider_args(base_url: str, *, has_key: bool) -> list[str]:
     return ["-c", "model_providers.local={" + ",".join(options) + "}", "-c", "model_provider=local"]
 
 
-def warn_remote_http(base_url: str) -> None:
-    url = urlsplit(base_url)
-    host = url.hostname or ""
-    if url.scheme != "http" or host.lower() == "localhost":
-        return
-    try:
-        if ip_address(host).is_loopback:
-            return
-    except ValueError:
-        pass
-    warnings.warn(
-        "A remote local-model provider uses HTTP: prompts and candidate code "
-        "cross the network in cleartext and can be intercepted. Use HTTPS "
-        "for remote providers.",
-        RuntimeWarning,
-        stacklevel=2,
-    )
-
-
 # written once `hillclimb connect codex` has logged codex in to its operator
 # home itself. A home without it holds a copy of the user's own login (what
 # hillclimb did before): codex spends a refresh token once, so a copy and its
@@ -121,6 +99,9 @@ def codex_env(auth: str = "subscription", cpus: int = 1) -> dict[str, str]:
         # Do not inherit keys for cloud providers on the self-hosted route.
         for key in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"):
             env.pop(key, None)
+        if not env.get(LOCAL_KEY_ENV):
+            # an empty key is no key: codex then sends no Authorization header
+            env.pop(LOCAL_KEY_ENV, None)
     elif auth != "api-key":
         # An inherited key can take precedence over the interactive login.
         env.pop("OPENAI_API_KEY", None)
@@ -196,11 +177,16 @@ CLAUDE_MODELS = ("sonnet", "opus", "haiku")
 CODEX_DEFAULT_LABEL = "codex-default"  # what the journal says when the CLI chose
 
 
+def claude_model(model: str) -> bool:
+    """Is `model` hillclimb's Claude vocabulary (an alias or a claude-* id)?"""
+    return model in CLAUDE_MODELS or model.startswith("claude")
+
+
 def native_model(model: str, auth: str = "subscription") -> str | None:
     """The `--model` to pass, or None to let the Codex CLI pick its default."""
     if auth in {"openrouter", "local"}:
         return model
-    if model in CLAUDE_MODELS or model.startswith("claude") or model == CODEX_DEFAULT_LABEL:
+    if claude_model(model) or model == CODEX_DEFAULT_LABEL:
         return None
     return model
 
@@ -347,17 +333,17 @@ class CodexCliAgent:
         self.auth = auth
         self.abort = abort
         self.local_base_url = local_base_url
-        if auth == "local" and local_base_url:
-            warn_remote_http(local_base_url)
 
-    def _command(self, request: AgentRequest) -> list[str]:
+    def _command(self, request: AgentRequest, env: dict[str, str]) -> list[str]:
+        """`env` is the child's environment: a local key is announced to
+        codex only when the child actually carries one."""
         cmd = [self.codex_bin]
         if self.auth == "openrouter":
             cmd += ["-c", OPENROUTER_PROVIDER, "-c", "model_provider=openrouter"]
         elif self.auth == "local":
             if not self.local_base_url:
                 raise ValueError("agent_auth: local needs local.base_url")
-            cmd += local_provider_args(self.local_base_url, has_key=bool(os.environ.get(LOCAL_KEY_ENV)))
+            cmd += local_provider_args(self.local_base_url, has_key=LOCAL_KEY_ENV in env)
             # Self-hosted Responses servers such as LM Studio accept function
             # tools, but not Codex's namespace or hosted web-search tools.
             cmd += ["--disable", "multi_agent", "-c", 'web_search="disabled"']
@@ -389,17 +375,6 @@ class CodexCliAgent:
         return cmd
 
     def invoke(self, request: AgentRequest) -> AgentResult:
-        if self.auth == "local" and not request.allow_internet:
-            # Codex owns its network sandbox; Hillclimb cannot allowlist just
-            # the model endpoint inside it. Do not turn the whole network on
-            # behind an operator's explicit no-internet setting.
-            return AgentResult(
-                ok=False,
-                error_kind="error",
-                error_message=("codex with agent_auth: local needs allow_internet_for_agents: true "
-                               "to reach the provider (Codex cannot allowlist one host)"),
-            )
-        cmd = self._command(request)
         candidate_dir = Path(request.candidate_dir)
         stream_path = candidate_dir / STREAM_FILE
         pid_path = candidate_dir / PID_FILE
@@ -415,7 +390,8 @@ class CodexCliAgent:
 
         try:
             child_env = codex_env(self.auth, request.cpus)
-        except RuntimeError as exc:
+            cmd = self._command(request, child_env)
+        except (RuntimeError, ValueError) as exc:
             return AgentResult(ok=False, error_kind="error", error_message=str(exc))
 
         try:

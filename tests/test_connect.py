@@ -173,6 +173,46 @@ def test_check_rejects_a_route_a_agent_does_not_implement():
     assert status.state == "unsupported" and not status.ok
 
 
+def test_codex_has_a_local_route_without_a_login(monkeypatch):
+    monkeypatch.setattr(connect.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.delenv("HILLCLIMB_LOCAL_API_KEY", raising=False)
+    status = connect._check_codex("local")
+    assert status.state == "ready" and "self-hosted" in status.detail
+
+
+def test_ping_hands_the_local_server_to_the_agent(monkeypatch, tmp_path):
+    import hillclimb.agents as agents
+    from hillclimb.agents.base import AgentResult
+
+    seen = {}
+
+    class Fake:
+        def invoke(self, request):
+            return AgentResult(ok=True)
+
+    def fake_get_agent(name, **kwargs):
+        seen.update(kwargs)
+        return Fake()
+
+    monkeypatch.setattr(agents, "get_agent", fake_get_agent)
+    monkeypatch.setattr("hillclimb.project.machine_cache_dir", lambda: tmp_path)
+    assert connect.ping("codex", "local", "my-model", local_base_url="http://localhost:1234/v1").ok
+    assert seen["local_base_url"] == "http://localhost:1234/v1"
+
+
+def test_connect_never_pins_the_local_route(monkeypatch, tmp_path):
+    folder = _hillclimb_dir(tmp_path)
+    monkeypatch.setenv("HILLCLIMB_DIR", str(folder))
+    monkeypatch.setattr(
+        connect, "check", lambda target, auth: connect.Status(target, auth, "ready", "fine")
+    )
+    monkeypatch.setattr(connect, "import_credentials", lambda *a, **k: None)
+    result = CliRunner().invoke(cli.app, ["connect", "codex", "--auth", "local", "--no-probe"])
+    assert result.exit_code == 0, result.output
+    assert "not pinned" in result.output
+    assert not _user_config(tmp_path).exists()
+
+
 def test_a_working_login_is_logged_in_until_connect_marks_it_ready(monkeypatch, tmp_path):
     """The three states: `logged-out` (the agent's own login is missing),
     `logged-in` (it works, hillclimb has not connected it), `ready` (both).
@@ -563,7 +603,7 @@ def test_connect_codex_pings_the_clis_default_model_for_a_claude_alias(monkeypat
     monkeypatch.setattr(connect, "import_credentials", lambda *a, **k: None)
     pinged = []
 
-    def fake_ping(agent, auth, model, *, models_file=None):
+    def fake_ping(agent, auth, model, *, models_file=None, local_base_url=None):
         pinged.append((agent, auth, model))
         return AgentResult(ok=True, model_id="gpt-5-codex", total_tokens=12, duration_s=1.0)
 

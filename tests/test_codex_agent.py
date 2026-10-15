@@ -231,11 +231,10 @@ def test_openrouter_auth_adds_the_provider_overrides(tmp_path: Path, monkeypatch
     assert 'env_key="OPENROUTER_API_KEY"' in provider[0]
 
 
-def test_local_auth_routes_keyless_to_responses_and_warns_on_remote_http(tmp_path: Path, monkeypatch):
+def test_local_auth_routes_keyless_to_responses(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("HILLCLIMB_LOCAL_API_KEY", raising=False)
-    with pytest.warns(RuntimeWarning, match="cleartext"):
-        agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK), auth="local",
-                              local_base_url="http://provider.example:8080/v1")
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK), auth="local",
+                          local_base_url="http://provider.example:8080/v1")
     request = make_request(tmp_path)
     assert agent.invoke(request).ok
     cmd = json.loads((request.candidate_dir / "agent_raw.json").read_text())["cmd"]
@@ -271,15 +270,38 @@ def test_local_key_stays_in_env_not_argv_or_journal(tmp_path: Path, monkeypatch)
     assert "OPENAI_API_KEY" not in env and "OPENROUTER_API_KEY" not in env
 
 
-def test_local_route_does_not_override_no_internet(tmp_path: Path):
-    agent = CodexCliAgent(codex_bin="/nonexistent/codex", auth="local",
+def test_local_route_runs_without_internet_like_the_other_routes(tmp_path: Path):
+    # no-internet cuts the network of the commands codex runs, never codex's
+    # own calls to its model server (OpenRouter works the same way)
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK), auth="local",
                           local_base_url="http://localhost:8080/v1")
     request = make_request(tmp_path)
     request.allow_internet = False
-    result = agent.invoke(request)
-    assert not result.ok
-    assert "allow_internet_for_agents: true" in result.error_message
-    assert not (request.candidate_dir / "agent_raw.json").exists()
+    assert agent.invoke(request).ok
+    cmd = json.loads((request.candidate_dir / "agent_raw.json").read_text())["cmd"]
+    assert "model_provider=local" in cmd
+    assert "sandbox_workspace_write.network_access=false" in cmd
+
+
+def test_an_empty_local_key_is_no_key(tmp_path: Path, monkeypatch):
+    # the provider's env_key and the child's environment must agree: an empty
+    # key names no env_key and reaches the child not at all
+    from hillclimb.agents.codex_cli import LOCAL_KEY_ENV, codex_env
+
+    monkeypatch.setenv(LOCAL_KEY_ENV, "")
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK), auth="local",
+                          local_base_url="http://localhost:8080/v1")
+    request = make_request(tmp_path)
+    assert agent.invoke(request).ok
+    cmd = json.loads((request.candidate_dir / "agent_raw.json").read_text())["cmd"]
+    assert "env_key" not in next(arg for arg in cmd if arg.startswith("model_providers.local="))
+    assert LOCAL_KEY_ENV not in codex_env("local")
+
+
+def test_local_route_without_a_base_url_is_an_error_result(tmp_path: Path):
+    agent = CodexCliAgent(codex_bin=make_stub(tmp_path, STUB_OK), auth="local")
+    result = agent.invoke(make_request(tmp_path))
+    assert not result.ok and "local.base_url" in result.error_message
 
 
 def test_subscription_auth_has_no_provider_overrides(tmp_path: Path):
@@ -452,3 +474,26 @@ def test_a_claude_alias_lets_the_codex_cli_pick_its_own_model(tmp_path: Path):
     assert "--model" not in raw["cmd"]
     stream = [json.loads(l) for l in (request.candidate_dir / "agent_stream.jsonl").read_text().splitlines()]
     assert stream[0]["model"] == CODEX_DEFAULT_LABEL
+
+
+def test_preflight_refuses_a_claude_model_on_the_local_route(monkeypatch):
+    from types import SimpleNamespace
+
+    from hillclimb import api
+    from hillclimb.config import Config
+
+    config = Config(agent="codex", agent_auth="local",
+                    local={"base_url": "http://provider.example:8080/v1"})
+    route = SimpleNamespace(agent="codex", agent_auth="local")
+
+    def routes(models):
+        return lambda *a, **k: iter([("draft", route, models)])
+
+    monkeypatch.setattr(api, "_routed_models", routes(["sonnet"]))
+    with pytest.raises(ValueError, match="'sonnet'"):
+        api._preflight_local_routes(config, Path("."), None, lambda line: None)
+
+    logged = []
+    monkeypatch.setattr(api, "_routed_models", routes(["my-model"]))
+    api._preflight_local_routes(config, Path("."), None, logged.append)
+    assert len(logged) == 1 and "cleartext" in logged[0]

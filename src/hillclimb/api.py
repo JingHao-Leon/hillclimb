@@ -576,6 +576,62 @@ def _preflight_sandbox(config: Config, log: Log) -> None:
     log("agents: no internet")
 
 
+def _routed_models(config: Config, search_dir: Path, router, memory_passes: Sequence[str] = ()):
+    """`(operator, route, models)` for every operator this search may call,
+    `models` being the route's pool where one is set."""
+    # every operator this search's climber may call is routed by its own
+    # name (`routing.draft`, `routing.gepa-reflect`, a climber's `crossover`)
+    operators = set(build_operators(config, search_dir).names())
+    operators.update(memory_passes)  # the coding agent calls the memory makes (claim distillation)
+    operators.update(
+        name
+        for name in config.routing
+        if name not in {"default", "distill", "consolidate"}
+    )
+    for operator in sorted(operators):
+        route = router.resolve(operator)
+        models = [route.model]
+        for layer in (
+            config.routing.get(operator),
+            config.routing.get("default"),
+        ):
+            if layer is None:
+                continue
+            if layer.models:
+                models = list(layer.models)
+                break
+            if layer.model:
+                break
+        yield operator, route, models
+
+
+def _preflight_local_routes(
+    config: Config, search_dir: Path, router, log: Log, memory_passes: Sequence[str] = ()
+) -> None:
+    """Refuse, before anything spends, a self-hosted route that would send a
+    Claude model name to the server: `model` defaults to `sonnet`, which a
+    local server rejects on every call."""
+    from hillclimb.agents.codex_cli import claude_model
+
+    local = False
+    for operator, route, models in _routed_models(config, search_dir, router, memory_passes):
+        if route.agent_auth != "local":
+            continue
+        local = True
+        for model in models:
+            if model and claude_model(model):
+                raise ValueError(
+                    f"agent_auth: local sends the model id to your server, and {operator!r} "
+                    f"would ask it for {model!r}: set `model:` (or the route's) to an id "
+                    "the server serves"
+                )
+    if local and config.local.cleartext_remote:
+        log(
+            f"warning: local.base_url {config.local.base_url} is plain HTTP to another "
+            "machine: prompts and candidate code cross the network in cleartext — use HTTPS"
+        )
+
+
 def _preflight_pi_routes(
     config: Config, search_dir: Path, router, agents, log: Log, memory_passes: Sequence[str] = ()
 ) -> None:
@@ -590,33 +646,10 @@ def _preflight_pi_routes(
 
     from hillclimb.harness.sandbox import agent_policy
 
-    # every operator this search's climber may call is routed by its own
-    # name (`routing.draft`, `routing.gepa-reflect`, a climber's `crossover`)
-    operators = set(build_operators(config, search_dir).names())
-    operators.update(memory_passes)  # the coding agent calls the memory makes (claim distillation)
-    operators.update(
-        name
-        for name in config.routing
-        if name not in {"default", "distill", "consolidate"}
-    )
-
     pending: dict[str, tuple] = {}
-    for operator in sorted(operators):
-        route = router.resolve(operator)
+    for operator, route, models in _routed_models(config, search_dir, router, memory_passes):
         if route.agent != "pi":
             continue
-        models = [route.model]
-        for layer in (
-            config.routing.get(operator),
-            config.routing.get("default"),
-        ):
-            if layer is None:
-                continue
-            if layer.models:
-                models = list(layer.models)
-                break
-            if layer.model:
-                break
         for model in models:
             key = json.dumps(
                 [route.agent_auth, model, route.sampling],
@@ -802,6 +835,7 @@ class Search:
         router = Router(config)
 
         _preflight_sandbox(config, log)
+        _preflight_local_routes(config, search_dir, router, log, memory_passes=memory.agent_passes())
         _preflight_pi_routes(config, search_dir, router, agents, log, memory_passes=memory.agent_passes())
         from hillclimb.project import machine_cache_dir
 
