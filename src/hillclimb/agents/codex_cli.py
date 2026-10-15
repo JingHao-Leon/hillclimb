@@ -39,6 +39,25 @@ OPENROUTER_PROVIDER = (
 )
 
 
+LOCAL_KEY_ENV = "HILLCLIMB_LOCAL_API_KEY"
+
+
+def local_provider_args(base_url: str, *, has_key: bool) -> list[str]:
+    """Codex overrides for a keyless or env-keyed OpenAI Responses server.
+
+    JSON-quoted strings are also TOML basic strings. Never put the key value
+    in the command (which is saved in agent_raw.json).
+    """
+    options = [
+        'name="Local model"',
+        f"base_url={json.dumps(base_url)}",
+        'wire_api="responses"',
+    ]
+    if has_key:
+        options.append(f'env_key="{LOCAL_KEY_ENV}"')
+    return ["-c", "model_providers.local={" + ",".join(options) + "}", "-c", "model_provider=local"]
+
+
 # written once `hillclimb connect codex` has logged codex in to its operator
 # home itself. A home without it holds a copy of the user's own login (what
 # hillclimb did before): codex spends a refresh token once, so a copy and its
@@ -76,6 +95,13 @@ def codex_env(auth: str = "subscription", cpus: int = 1) -> dict[str, str]:
             )
         # billing must not fall back to an inherited OpenAI account
         env.pop("OPENAI_API_KEY", None)
+    elif auth == "local":
+        # Do not inherit keys for cloud providers on the self-hosted route.
+        for key in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"):
+            env.pop(key, None)
+        if not env.get(LOCAL_KEY_ENV):
+            # an empty key is no key: codex then sends no Authorization header
+            env.pop(LOCAL_KEY_ENV, None)
     elif auth != "api-key":
         # An inherited key can take precedence over the interactive login.
         env.pop("OPENAI_API_KEY", None)
@@ -151,11 +177,16 @@ CLAUDE_MODELS = ("sonnet", "opus", "haiku")
 CODEX_DEFAULT_LABEL = "codex-default"  # what the journal says when the CLI chose
 
 
+def claude_model(model: str) -> bool:
+    """Is `model` hillclimb's Claude vocabulary (an alias or a claude-* id)?"""
+    return model in CLAUDE_MODELS or model.startswith("claude")
+
+
 def native_model(model: str, auth: str = "subscription") -> str | None:
     """The `--model` to pass, or None to let the Codex CLI pick its default."""
-    if auth == "openrouter":
+    if auth in {"openrouter", "local"}:
         return model
-    if model in CLAUDE_MODELS or model.startswith("claude") or model == CODEX_DEFAULT_LABEL:
+    if claude_model(model) or model == CODEX_DEFAULT_LABEL:
         return None
     return model
 
@@ -296,15 +327,26 @@ class CodexCliAgent:
         codex_bin: str = "codex",
         auth: str = "subscription",
         abort: "threading.Event | None" = None,
+        local_base_url: str | None = None,
     ):
         self.codex_bin = codex_bin
         self.auth = auth
         self.abort = abort
+        self.local_base_url = local_base_url
 
-    def _command(self, request: AgentRequest) -> list[str]:
+    def _command(self, request: AgentRequest, env: dict[str, str]) -> list[str]:
+        """`env` is the child's environment: a local key is announced to
+        codex only when the child actually carries one."""
         cmd = [self.codex_bin]
         if self.auth == "openrouter":
             cmd += ["-c", OPENROUTER_PROVIDER, "-c", "model_provider=openrouter"]
+        elif self.auth == "local":
+            if not self.local_base_url:
+                raise ValueError("agent_auth: local needs local.base_url")
+            cmd += local_provider_args(self.local_base_url, has_key=LOCAL_KEY_ENV in env)
+            # Self-hosted Responses servers such as LM Studio accept function
+            # tools, but not Codex's namespace or hosted web-search tools.
+            cmd += ["--disable", "multi_agent", "-c", 'web_search="disabled"']
         native = native_model(request.model, self.auth)
         if native is not None:
             cmd += ["--model", native]
@@ -333,7 +375,6 @@ class CodexCliAgent:
         return cmd
 
     def invoke(self, request: AgentRequest) -> AgentResult:
-        cmd = self._command(request)
         candidate_dir = Path(request.candidate_dir)
         stream_path = candidate_dir / STREAM_FILE
         pid_path = candidate_dir / PID_FILE
@@ -349,7 +390,8 @@ class CodexCliAgent:
 
         try:
             child_env = codex_env(self.auth, request.cpus)
-        except RuntimeError as exc:
+            cmd = self._command(request, child_env)
+        except (RuntimeError, ValueError) as exc:
             return AgentResult(ok=False, error_kind="error", error_message=str(exc))
 
         try:

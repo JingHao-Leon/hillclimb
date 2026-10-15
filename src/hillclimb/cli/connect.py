@@ -197,7 +197,10 @@ def _run_probe(
     common.say(f"pinging [path]{common._m(agent)}[/] with {label} …")
     # the configured model goes through as is: the coding agent decides what to
     # do with it, exactly as it will inside a search
-    result = connect_mod.ping(agent, auth, model, models_file=config.pi.models_file)
+    result = connect_mod.ping(
+        agent, auth, model,
+        models_file=config.pi.models_file, local_base_url=config.local.base_url,
+    )
     if not result.ok:
         detail = result.error_message or result.error_kind or "unknown error"
         if raise_expired and connect_mod.login_expired(detail):
@@ -268,10 +271,22 @@ def _connect_agent(
     model = model or config.model
     pinged: str | None = None
     if probe:
+        from hillclimb.agents.codex_cli import claude_model
+
         if auth == "openrouter" and "/" not in model:
             common.warn(
                 f"no OpenRouter model id to ping with ({common._m(repr(model))}) — "
                 "re-run with [cmd]--model <provider>/<model>[/] to check the route"
+            )
+        elif auth == "local" and not config.local.base_url:
+            common.warn(
+                "no server to ping: set [cmd]local.base_url[/] in hillclimb.yaml "
+                "(or the user config) first"
+            )
+        elif auth == "local" and claude_model(model):
+            common.warn(
+                f"no model id of your server's to ping with ({common._m(repr(model))}) — "
+                "re-run with [cmd]--model <id>[/] to check the route"
             )
         else:
             # `login status` only sees a credential file: a login that is
@@ -302,6 +317,15 @@ def _connect_agent(
     # the mark that turns `logged-in` into `ready`
     connect_mod.mark_connected(target, auth, pinged)
     _print_status(connect_mod.check(target, auth))
+    if auth == "local":
+        # the route only works beside its local.base_url, and connect writes
+        # top-level scalars: pinning `agent_auth: local` where no base_url is
+        # would break every folder that config reaches
+        common.say(
+            "[note]agent_auth: local is set where local.base_url is "
+            "(hillclimb.yaml) — not pinned[/]"
+        )
+        return
     _write_defaults(
         _connect_target_config(config, local=local),
         {"agent": agent, "agent_auth": auth},

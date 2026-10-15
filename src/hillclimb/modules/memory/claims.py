@@ -440,7 +440,8 @@ def invoke_knowledge_agent(
     from hillclimb.harness.sandbox import agent_policy
 
     agent = get_agent(
-        agent_name, auth=auth, pi_models_file=config.pi.models_file
+        agent_name, auth=auth, pi_models_file=config.pi.models_file,
+        local_base_url=config.local.base_url,
     )
     return agent.invoke(
         AgentRequest(

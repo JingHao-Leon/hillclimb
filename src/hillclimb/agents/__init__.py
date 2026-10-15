@@ -18,10 +18,10 @@ def _make_dummy(auth: str) -> Agent:
     return DummyAgent()
 
 
-def _make_codex(auth: str) -> Agent:
+def _make_codex(auth: str, local_base_url: str | None = None) -> Agent:
     from hillclimb.agents.codex_cli import CodexCliAgent
 
-    return CodexCliAgent(auth=auth)
+    return CodexCliAgent(auth=auth, local_base_url=local_base_url)
 
 
 def _make_pi(auth: str, models_file: Path | None = None) -> Agent:
@@ -104,6 +104,7 @@ def get_agent(
     auth: str = "subscription",
     *,
     pi_models_file: Path | None = None,
+    local_base_url: str | None = None,
 ) -> Agent:
     if name not in _AGENTS:
         raise ValueError(
@@ -112,6 +113,8 @@ def get_agent(
         )
     if name == "pi":
         return _make_pi(auth, pi_models_file)
+    if name == "codex":
+        return _make_codex(auth, local_base_url)
     return _AGENTS[name](auth)
 
 

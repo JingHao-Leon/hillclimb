@@ -200,7 +200,12 @@ hold only the bases, which decide nothing. `_moved.py` maps pre-move module pref
 - Coding agent billing: `agent_auth` picks who pays — `subscription` (the Claude or
   ChatGPT login), `api-key`, or `openrouter`, which points codex or pi at
   OpenRouter (`wire_api: responses`; the key comes from the environment or a
-  `.env` beside hillclimb.yaml) and bills OpenRouter credits instead. Every codex
+  `.env` beside hillclimb.yaml) and bills OpenRouter credits instead, or `local`
+  (codex only): a self-hosted Responses server at `local.base_url`, key from
+  `HILLCLIMB_LOCAL_API_KEY` (named to codex as `env_key`, never on argv), codex's
+  namespace/web-search tools disabled, `api._preflight_local_routes` refusing a
+  Claude model name before anything spends; `connect` checks it by ping only and
+  never pins it (the base_url lives in hillclimb.yaml). Every codex
   call runs under an isolated `CODEX_HOME` in
   `~/.cache/hillclimb/codex-home/<auth>/`, so personal `~/.codex` settings
   change neither a search's results nor its token bill; a provider 402 parks

@@ -25,6 +25,7 @@ the coding agent seam in `src/hillclimb/agents/`:
 | `claude-code` | Claude Code in headless mode — the production coding agent; bills your Claude subscription |
 | `codex` | Codex CLI in non-interactive mode; uses your Codex login by default. hillclimb's `model` defaults to `sonnet`, a Claude alias codex refuses, so for any Claude alias the coding agent omits `--model` and the Codex CLI's own default model answers (the journal says `codex-default`); set `model:` to a codex id to pin one |
 | `codex` + `agent_auth: openrouter` | the same Codex CLI pointed at OpenRouter: cheap open models billed to OpenRouter credits, no subscription touched |
+| `codex` + `agent_auth: local` | Codex CLI pointed at a self-hosted OpenAI **Responses API** endpoint; no Codex subscription or OpenRouter key required |
 | `pi` | pi coding agent in JSON mode; subscription login, API keys, OpenRouter or custom local providers, with per-operator sampling |
 | `dummy` | no model calls: a scripted operator for exercising the engine, TUIs and run layout |
 | `toy` | no model calls: scripted moves on the bundled `fitness-landscape` problem, where every solution is one point on a terrain, so scores move and a search takes seconds. What the [examples](../examples/) run on |
@@ -194,6 +195,42 @@ logins), an OpenRouter key leaves the `.env`. Your own Claude, Codex or pi login
 stays: hillclimb never touches it.
 
 `hillclimb smoke` is the next step up: a whole DRAFT on a real problem.
+
+## Self-hosted model with Codex
+
+Install the Codex CLI (`npm install -g @openai/codex`). The server must support
+OpenAI's **Responses API**, including streaming and tool calls; a Chat
+Completions-only server cannot drive Codex. For this route Codex advertises
+only function tools: its multi-agent namespace
+and hosted web-search tools are disabled because many self-hosted Responses
+servers (including LM Studio) reject those tool types. In the hillclimb dir's
+`hillclimb.yaml`:
+
+```yaml
+agent_auth: local
+local:
+  base_url: http://127.0.0.1:8080/v1
+```
+
+In `runs/config.yaml` (the run defaults):
+
+```yaml
+agent: codex
+model: my-model-id
+```
+
+Set `HILLCLIMB_LOCAL_API_KEY` in the environment or in a gitignored `.env`
+beside `hillclimb.yaml` if the server requires a key; otherwise no key is sent.
+Keys are never written to the run config, command line or journal. There is
+no login: `hillclimb connect codex --auth local --model my-model-id` pings the
+server with one tool-free call to check the route. `model:` must be an id the
+server serves: a search refuses to start on a Claude name such as the default
+`sonnet`. Try `hillclimb run <problem> --budget 10m` and `hillclimb watch`.
+`allow_internet_for_agents: false` works as with the other codex routes: it
+cuts the network for the commands codex runs, while codex itself still reaches
+the model server. HTTP to a non-loopback host sends prompts and candidate code
+in cleartext (the search log warns): use HTTPS for remote servers. For pi with
+a local server, use `pi.models_file` as described below.
 
 ## Cheap operators through OpenRouter
 
